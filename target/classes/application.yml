@@ -1,0 +1,79 @@
+spring:
+  application:
+    name: order-management-system
+  profiles:
+    active: local
+
+  # JPA/Hibernate Configuration
+  jpa:
+    database-platform: org.hibernate.dialect.OracleDialect
+    hibernate:
+      ddl-auto: validate  # Use 'validate' for production, 'update' for development
+      format_sql: true
+      use_sql_comments: true
+    properties:
+      hibernate:
+        # Query Optimization Configuration
+        dialect: org.hibernate.dialect.OracleDialect
+        jdbc:
+          batch_size: 20
+          fetch_size: 50
+        order_inserts: true
+        order_updates: true
+        # Fetch strategy for relationships - defaults to LAZY (explained in entities)
+        enable_lazy_load_no_trans: false # Prevent LazyInitializationException
+    show-sql: false # Enable for debugging
+    open-in-view: false # Prevent OpenSessionInViewFilter for better control
+
+  # Datasource Configuration (uses HikariCP by default)
+  datasource:
+    driver-class-name: oracle.jdbc.OracleDriver
+    hikari:
+      # Connection pool configuration with HikariCP best practices
+      # minimumIdle: minimum number of idle connections maintained
+      # maximumPoolSize: maximum connections that can be created
+      minimum-idle: 5  # Reduces connection overhead for small workloads
+      maximum-pool-size: 20  # Reasonable limit for typical application loads
+      connection-timeout: 30000  # Time in ms to wait for connection (30 seconds)
+      idle-timeout: 600000  # Close connection if idle for 10 minutes
+      max-lifetime: 1800000  # Maximum lifetime of connection (30 minutes)
+      auto-commit: false  # Control transactions explicitly
+      connection-test-query: "SELECT 1 FROM DUAL"  # Test query for Oracle
+
+logging:
+  level:
+    root: INFO
+    com.apidesign: DEBUG
+    org.hibernate.SQL: DEBUG
+    org.hibernate.type.descriptor.sql.BasicBinder: TRACE # Show SQL parameters
+    org.springframework.web: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+  file:
+    name: logs/application.log
+
+server:
+  servlet:
+    context-path: /api/v1
+  port: 8080
+
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: true
+    operations-sorter: method
+    tags-sorter: alpha
+    doc-expansion: list
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when-authorized
+
