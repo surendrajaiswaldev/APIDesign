@@ -1,8 +1,17 @@
 package com.apidesign.entity;
 
-import jakarta.persistence.*;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.Index;
+import jakarta.persistence.SequenceGenerator;
+import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Positive;
+import java.math.BigDecimal;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
@@ -10,26 +19,21 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 import lombok.experimental.SuperBuilder;
 
-import java.math.BigDecimal;
-
 /**
- * Product entity representing items available for purchase.
+ * Product available for purchase. Stock writes go through atomic SQL in
+ * {@code ProductRepository.decrementStock(...)} / {@code restoreStock(...)}; the in-memory
+ * helpers below remain for non-concurrent paths (snapshotting, tests).
  *
- * Relationship: Product -> OrderItems (One-to-Many)
- * A product can be part of multiple order items.
- *
- * Why BigDecimal for price: Essential for monetary calculations to avoid
- * floating-point precision issues. Never use double/float for currency!
- *
- * Why LAZY loading: OrderItems will fetch products only when accessed,
- * avoiding unnecessary queries. Use @Fetch(FetchMode.JOIN) in repository
- * queries only when needed.
+ * Carries an optimistic lock {@link Version} field — concurrent modifications of the same
+ * row will fail with {@code OptimisticLockingFailureException} and surface as 409.
  */
 @Entity
-@Table(name = "PRODUCTS", indexes = {
-    @Index(name = "IDX_PRODUCT_CATEGORY", columnList = "CATEGORY"),
-    @Index(name = "IDX_PRODUCT_SKU", columnList = "SKU")
-})
+@Table(
+    name = "PRODUCTS",
+    indexes = {
+        @Index(name = "IDX_PRODUCT_CATEGORY", columnList = "CATEGORY"),
+        @Index(name = "IDX_PRODUCT_SKU", columnList = "SKU")
+    })
 @Getter
 @Setter
 @NoArgsConstructor
@@ -38,10 +42,15 @@ import java.math.BigDecimal;
 public class Product extends BaseEntity {
     private static final long serialVersionUID = 1L;
 
-    /**
-     * Stock Keeping Unit - unique product identifier.
-     * Important for inventory management and product lookup.
-     */
+    @Id
+    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "product_seq_gen")
+    @SequenceGenerator(name = "product_seq_gen", sequenceName = "PRODUCT_SEQ", allocationSize = 50)
+    private Long id;
+
+    @Version
+    @Column(name = "VERSION")
+    private Long version;
+
     @NotBlank(message = "SKU is required")
     @Column(name = "SKU", length = 50, nullable = false, unique = true)
     private String sku;
@@ -53,85 +62,29 @@ public class Product extends BaseEntity {
     @Column(name = "DESCRIPTION", length = 500)
     private String description;
 
-    /**
-     * Product price in BigDecimal to maintain precision.
-     * Scale of 2 represents cents (e.g., 19.99).
-     */
     @Positive(message = "Price must be positive")
     @Column(name = "PRICE", precision = 10, scale = 2, nullable = false)
     private BigDecimal price;
 
-    /**
-     * Current stock quantity.
-     * Can be extended with warehouse-level stock tracking.
-     */
     @Column(name = "STOCK_QUANTITY", nullable = false)
     @Builder.Default
     private Long stockQuantity = 0L;
 
-    /**
-     * Minimum stock level for reorder alerts.
-     */
     @Column(name = "MIN_STOCK_LEVEL")
     @Builder.Default
     private Long minStockLevel = 10L;
 
-    /**
-     * Product category for filtering and searching.
-     */
     @Column(name = "CATEGORY", length = 50)
     private String category;
 
-    /**
-     * Flag to indicate if product is available for purchase.
-     */
     @Column(name = "IS_AVAILABLE", nullable = false)
     @Builder.Default
     private Boolean isAvailable = true;
 
-    /**
-     * Supplier/Manufacturer information.
-     */
     @Column(name = "SUPPLIER", length = 100)
     private String supplier;
 
-    @PrePersist
-    protected void onCreate() {
-        super.onCreate();
-        if (this.stockQuantity == null) {
-            this.stockQuantity = 0L;
-        }
-        if (this.isAvailable == null) {
-            this.isAvailable = true;
-        }
-    }
-
-    @PreUpdate
-    protected void onUpdate() {
-        super.onUpdate();
-    }
-
-    /**
-     * Helper method to check if product has sufficient stock.
-     * Used in order validation logic.
-     *
-     * @param quantity quantity to check
-     * @return true if sufficient stock available
-     */
     public boolean hasEnoughStock(Long quantity) {
-        return this.stockQuantity != null && this.stockQuantity >= quantity;
-    }
-
-    /**
-     * Helper method to reduce stock after order placement.
-     * Called during order processing.
-     *
-     * @param quantity quantity to reduce
-     */
-    public void reduceStock(Long quantity) {
-        if (this.stockQuantity != null && this.stockQuantity >= quantity) {
-            this.stockQuantity -= quantity;
-        }
+        return this.stockQuantity != null && quantity != null && this.stockQuantity >= quantity;
     }
 }
-

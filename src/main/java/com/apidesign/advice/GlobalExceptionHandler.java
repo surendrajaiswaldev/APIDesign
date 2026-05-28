@@ -1,206 +1,283 @@
 package com.apidesign.advice;
 
-import com.apidesign.exception.BaseException;
-import com.apidesign.response.ApiResponse;
-import com.apidesign.response.ValidationErrorResponse;
+import com.apidesign.constants.ErrorCodes;
+import com.apidesign.exception.BusinessLogicException;
+import com.apidesign.exception.DatabaseException;
+import com.apidesign.exception.ResourceNotFoundException;
+import com.apidesign.exception.ValidationException;
+import com.apidesign.service.ExceptionAuditService;
+import com.apidesign.util.CorrelationIdUtil;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.ConstraintViolationException;
+import java.net.URI;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
+import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
-import java.util.ArrayList;
-import java.util.List;
-
 /**
- * Global exception handler for REST API.
- *
- * @RestControllerAdvice = @ControllerAdvice + @ResponseBody
- * - Applies to all @RestController classes
- * - All methods return JSON/XML (not views)
- * - Catches exceptions from entire application
- *
- * Benefits of centralized exception handling:
- * - Consistent error responses across API
- * - Single place to modify error format
- * - Reduces boilerplate in controllers
- * - Proper HTTP status codes
- * - Secure error messages (don't leak internals)
- *
- * Exception Handling Chain:
- * 1. Method in Controller throws exception
- * 2. Spring catches it and routes to GlobalExceptionHandler
- * 3. Appropriate @ExceptionHandler method processes it
- * 4. Response is built and sent to client
- *
- * Order of Methods (Priority):
- * Spring checks handlers in this order:
- * 1. Exact type match
- * 2. Superclass match
- * 3. Generic catch-all
+ * Translates exceptions to RFC 7807 {@link ProblemDetail} bodies. Every response carries
+ * {@code errorCode} and {@code correlationId} extension members.
  */
 @Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
-    /**
-     * Handle custom application exceptions (BaseException and subclasses).
-     *
-     * Subclasses: BusinessLogicException, ValidationException,
-     *             ResourceNotFoundException, DatabaseException
-     *
-     * Each subclass provides appropriate HTTP status code.
-     *
-     * @param ex the custom exception
-     * @param request the web request
-     * @return standardized error response
-     */
-    @ExceptionHandler(BaseException.class)
-    public ResponseEntity<ApiResponse<Object>> handleCustomException(
-            BaseException ex,
-            WebRequest request) {
+    private final ExceptionAuditService exceptionAuditService;
 
-        log.warn("Custom exception occurred - Error Code: {}, Message: {}",
-                ex.getErrorCode(),
-                ex.getMessage());
-
-        ApiResponse<Object> response = ApiResponse.error(
-            ex.getStatusCode(),
-            ex.getMessage()
-        );
-
-        return new ResponseEntity<>(response, HttpStatus.valueOf(ex.getStatusCode()));
+    public GlobalExceptionHandler(ExceptionAuditService exceptionAuditService) {
+        this.exceptionAuditService = exceptionAuditService;
     }
 
-    /**
-     * Handle Bean Validation exceptions (from @Valid, @Validated).
-     *
-     * When validation fails on @RequestBody:
-     * Spring wraps field errors in MethodArgumentNotValidException
-     *
-     * This handler:
-     * - Extracts field validation errors
-     * - Builds structured error response
-     * - Returns 400 Bad Request
-     *
-     * @param ex the validation exception
-     * @param request the web request
-     * @return validation error response with field details
-     */
+    // --- Domain exceptions -------------------------------------------------
+
+    @ExceptionHandler(ResourceNotFoundException.class)
+    public ResponseEntity<ProblemDetail> handleNotFound(
+        ResourceNotFoundException ex, HttpServletRequest httpRequest, WebRequest request) {
+        audit(httpRequest, HttpStatus.NOT_FOUND.value(), ex);
+        return problem(HttpStatus.NOT_FOUND, "Resource not found", ex.getMessage(), ex.getErrorCode(),
+            request);
+    }
+
+    @ExceptionHandler(BusinessLogicException.class)
+    public ResponseEntity<ProblemDetail> handleBusiness(
+        BusinessLogicException ex, HttpServletRequest httpRequest, WebRequest request) {
+        HttpStatus status = HttpStatus.valueOf(ex.getStatusCode());
+        audit(httpRequest, status.value(), ex);
+        return problem(status, status.getReasonPhrase(), ex.getMessage(), ex.getErrorCode(), request);
+    }
+
+    @ExceptionHandler(ValidationException.class)
+    public ResponseEntity<ProblemDetail> handleValidation(
+        ValidationException ex, HttpServletRequest httpRequest, WebRequest request) {
+        audit(httpRequest, HttpStatus.BAD_REQUEST.value(), ex);
+        return problem(HttpStatus.BAD_REQUEST, "Validation failed", ex.getMessage(),
+            ex.getErrorCode(), request);
+    }
+
+    @ExceptionHandler(DatabaseException.class)
+    public ResponseEntity<ProblemDetail> handleDatabase(
+        DatabaseException ex, HttpServletRequest httpRequest, WebRequest request) {
+        log.error("Database error: {}", ex.getMessage(), ex);
+        audit(httpRequest, HttpStatus.INTERNAL_SERVER_ERROR.value(), ex);
+        return problem(HttpStatus.INTERNAL_SERVER_ERROR, "Database error",
+            "An internal database error occurred", ex.getErrorCode(), request);
+    }
+
+    // --- Bean validation ---------------------------------------------------
+
     @Override
     protected ResponseEntity<Object> handleMethodArgumentNotValid(
-            MethodArgumentNotValidException ex,
-            HttpHeaders headers,
-            HttpStatusCode status,
-            WebRequest request) {
+        MethodArgumentNotValidException ex,
+        HttpHeaders headers,
+        HttpStatusCode status,
+        WebRequest request) {
 
-        // Extract field errors from binding result
-        List<ValidationErrorResponse.FieldError> fieldErrors = new ArrayList<>();
-        ex.getBindingResult().getFieldErrors().forEach(error ->
-            fieldErrors.add(ValidationErrorResponse.FieldError.builder()
-                .field(error.getField())
-                .message(error.getDefaultMessage())
-                .rejectedValue(error.getRejectedValue())
-                .build())
-        );
+        List<Map<String, Object>> fieldErrors = new ArrayList<>();
+        ex.getBindingResult().getFieldErrors().forEach(fe -> {
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("field", fe.getField());
+            entry.put("message", fe.getDefaultMessage());
+            entry.put("rejectedValue", fe.getRejectedValue());
+            fieldErrors.add(entry);
+        });
 
-        // Build validation error response
-        ValidationErrorResponse errorResponse = ValidationErrorResponse.of(
-            "Validation failed",
-            request.getDescription(false).replace("uri=", ""),
-            fieldErrors
-        );
-
-        log.warn("Validation error: {} field(s) failed validation",
-                fieldErrors.size());
-
-        return new ResponseEntity<>(errorResponse, HttpStatus.BAD_REQUEST);
+        audit(httpRequestOf(request), HttpStatus.BAD_REQUEST.value(), ex);
+        ProblemDetail pd = buildProblem(
+            HttpStatus.BAD_REQUEST, "Validation failed",
+            "One or more fields failed validation",
+            ErrorCodes.VALIDATION_FAILED, request);
+        pd.setProperty("fieldErrors", fieldErrors);
+        return new ResponseEntity<>(pd, HttpStatus.BAD_REQUEST);
     }
 
-    /**
-     * Handle generic exceptions (IllegalArgumentException, etc.).
-     *
-     * Catch-all for unexpected exceptions.
-     * Logs full stack trace for debugging.
-     *
-     * @param ex the exception
-     * @param request the web request
-     * @return generic error response
-     */
+    @ExceptionHandler(ConstraintViolationException.class)
+    public ResponseEntity<ProblemDetail> handleConstraintViolation(
+        ConstraintViolationException ex, HttpServletRequest httpRequest, WebRequest request) {
+        audit(httpRequest, HttpStatus.BAD_REQUEST.value(), ex);
+        ProblemDetail pd = buildProblem(
+            HttpStatus.BAD_REQUEST,
+            "Constraint violation",
+            ex.getMessage(),
+            ErrorCodes.VALIDATION_FAILED,
+            request);
+        List<Map<String, Object>> violations = ex.getConstraintViolations().stream().map(v -> {
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("path", String.valueOf(v.getPropertyPath()));
+            entry.put("message", v.getMessage());
+            entry.put("rejectedValue", v.getInvalidValue());
+            return entry;
+        }).toList();
+        pd.setProperty("fieldErrors", violations);
+        return new ResponseEntity<>(pd, HttpStatus.BAD_REQUEST);
+    }
+
+    // --- Request parsing / params -----------------------------------------
+
+    @Override
+    protected ResponseEntity<Object> handleHttpMessageNotReadable(
+        HttpMessageNotReadableException ex,
+        HttpHeaders headers,
+        HttpStatusCode status,
+        WebRequest request) {
+        audit(httpRequestOf(request), HttpStatus.BAD_REQUEST.value(), ex);
+        ProblemDetail pd = buildProblem(
+            HttpStatus.BAD_REQUEST,
+            "Malformed request",
+            "Request body is not readable or contains an invalid value",
+            ErrorCodes.INVALID_REQUEST,
+            request);
+        return new ResponseEntity<>(pd, HttpStatus.BAD_REQUEST);
+    }
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ProblemDetail> handleTypeMismatch(
+        MethodArgumentTypeMismatchException ex, HttpServletRequest httpRequest, WebRequest request) {
+        audit(httpRequest, HttpStatus.BAD_REQUEST.value(), ex);
+        String detail = "Parameter '" + ex.getName() + "' has invalid value '" + ex.getValue() + "'";
+        return problem(HttpStatus.BAD_REQUEST, "Type mismatch", detail, ErrorCodes.INVALID_REQUEST,
+            request);
+    }
+
+    @Override
+    protected ResponseEntity<Object> handleMissingServletRequestParameter(
+        MissingServletRequestParameterException ex,
+        HttpHeaders headers,
+        HttpStatusCode status,
+        WebRequest request) {
+        audit(httpRequestOf(request), HttpStatus.BAD_REQUEST.value(), ex);
+        ProblemDetail pd = buildProblem(
+            HttpStatus.BAD_REQUEST,
+            "Missing parameter",
+            "Required parameter '" + ex.getParameterName() + "' is missing",
+            ErrorCodes.INVALID_REQUEST,
+            request);
+        return new ResponseEntity<>(pd, HttpStatus.BAD_REQUEST);
+    }
+
+    // --- Persistence / concurrency ----------------------------------------
+
+    @ExceptionHandler(OptimisticLockingFailureException.class)
+    public ResponseEntity<ProblemDetail> handleOptimisticLock(
+        OptimisticLockingFailureException ex, HttpServletRequest httpRequest, WebRequest request) {
+        audit(httpRequest, HttpStatus.CONFLICT.value(), ex);
+        return problem(HttpStatus.CONFLICT, "Concurrent modification",
+            "The resource was modified by another request. Retry with the latest version.",
+            ErrorCodes.OPTIMISTIC_LOCK, request);
+    }
+
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<ProblemDetail> handleDataIntegrity(
+        DataIntegrityViolationException ex, HttpServletRequest httpRequest, WebRequest request) {
+        log.warn("Data integrity violation: {}", ex.getMostSpecificCause().getMessage());
+        audit(httpRequest, HttpStatus.CONFLICT.value(), ex);
+        return problem(HttpStatus.CONFLICT, "Data integrity violation",
+            "Database constraint violated. Please check your data.",
+            ErrorCodes.CONSTRAINT_VIOLATION, request);
+    }
+
+    // --- Security ----------------------------------------------------------
+
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<ProblemDetail> handleAccessDenied(
+        AccessDeniedException ex, HttpServletRequest httpRequest, WebRequest request) {
+        audit(httpRequest, HttpStatus.FORBIDDEN.value(), ex);
+        return problem(HttpStatus.FORBIDDEN, "Access denied",
+            "You do not have permission to access this resource",
+            ErrorCodes.AUTH_ACCESS_DENIED, request);
+    }
+
+    @ExceptionHandler({AuthenticationException.class, BadCredentialsException.class})
+    public ResponseEntity<ProblemDetail> handleAuthentication(
+        AuthenticationException ex, HttpServletRequest httpRequest, WebRequest request) {
+        audit(httpRequest, HttpStatus.UNAUTHORIZED.value(), ex);
+        return problem(HttpStatus.UNAUTHORIZED, "Authentication failed",
+            ex.getMessage() == null ? "Authentication required" : ex.getMessage(),
+            ErrorCodes.AUTH_INVALID_CREDENTIALS, request);
+    }
+
+    // --- Fallback ----------------------------------------------------------
+
     @ExceptionHandler(IllegalArgumentException.class)
-    public ResponseEntity<ApiResponse<Object>> handleIllegalArgumentException(
-            IllegalArgumentException ex,
-            WebRequest request) {
-
-        log.error("Illegal argument exception: {}", ex.getMessage(), ex);
-
-        ApiResponse<Object> response = ApiResponse.error(
-            HttpStatus.BAD_REQUEST.value(),
-            "Invalid request: " + ex.getMessage()
-        );
-
-        return new ResponseEntity<>(response, HttpStatus.BAD_REQUEST);
+    public ResponseEntity<ProblemDetail> handleIllegalArgument(
+        IllegalArgumentException ex, HttpServletRequest httpRequest, WebRequest request) {
+        audit(httpRequest, HttpStatus.BAD_REQUEST.value(), ex);
+        return problem(HttpStatus.BAD_REQUEST, "Invalid argument",
+            ex.getMessage() == null ? "Invalid request" : ex.getMessage(),
+            ErrorCodes.INVALID_REQUEST, request);
     }
 
-    /**
-     * Handle database constraint violations.
-     *
-     * Common causes:
-     * - Duplicate unique key
-     * - Foreign key constraint violated
-     * - Data type mismatch
-     *
-     * @param ex the database exception
-     * @param request the web request
-     * @return constraint violation response
-     */
-    @ExceptionHandler(org.springframework.dao.DataIntegrityViolationException.class)
-    public ResponseEntity<ApiResponse<Object>> handleDataIntegrityViolation(
-            org.springframework.dao.DataIntegrityViolationException ex,
-            WebRequest request) {
-
-        log.error("Database integrity violation: {}", ex.getMessage(), ex);
-
-        ApiResponse<Object> response = ApiResponse.error(
-            HttpStatus.CONFLICT.value(),
-            "Database constraint violated. Please check your data."
-        );
-
-        return new ResponseEntity<>(response, HttpStatus.CONFLICT);
-    }
-
-    /**
-     * Handle all other uncaught exceptions.
-     *
-     * This is the safety net - should rarely be reached if handlers above
-     * cover major exception types.
-     *
-     * Security: Returns generic message to client (don't expose internals)
-     *
-     * @param ex the exception
-     * @param request the web request
-     * @return generic error response
-     */
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<ApiResponse<Object>> handleGlobalException(
-            Exception ex,
-            WebRequest request) {
+    public ResponseEntity<ProblemDetail> handleGeneric(
+        Exception ex, HttpServletRequest httpRequest, WebRequest request) {
+        log.error("Unhandled exception", ex);
+        audit(httpRequest, HttpStatus.INTERNAL_SERVER_ERROR.value(), ex);
+        return problem(HttpStatus.INTERNAL_SERVER_ERROR, "Internal server error",
+            "An internal server error occurred. Please contact support.",
+            ErrorCodes.INTERNAL_ERROR, request);
+    }
 
-        // Log full details for debugging (not sent to client)
-        log.error("Unexpected error occurred: {}", ex.getMessage(), ex);
+    // --- Helpers -----------------------------------------------------------
 
-        // Generic response (don't leak internal details to client)
-        ApiResponse<Object> response = ApiResponse.error(
-            HttpStatus.INTERNAL_SERVER_ERROR.value(),
-            "An internal server error occurred. Please contact support."
-        );
+    private void audit(HttpServletRequest req, int status, Throwable ex) {
+        try {
+            exceptionAuditService.record(req, status, ex, 0L);
+        } catch (Throwable t) {
+            // Defensive — audit service already swallows internally, but never let the handler fail.
+            log.error("Exception audit invocation failed: {}", t.getMessage(), t);
+        }
+    }
 
-        return new ResponseEntity<>(response, HttpStatus.INTERNAL_SERVER_ERROR);
+    private static HttpServletRequest httpRequestOf(WebRequest request) {
+        if (request instanceof org.springframework.web.context.request.ServletWebRequest swr) {
+            return swr.getRequest();
+        }
+        return null;
+    }
+
+    private static ResponseEntity<ProblemDetail> problem(
+        HttpStatus status, String title, String detail, String errorCode, WebRequest request) {
+        ProblemDetail pd = buildProblem(status, title, detail, errorCode, request);
+        return new ResponseEntity<>(pd, status);
+    }
+
+    private static ProblemDetail buildProblem(
+        HttpStatus status, String title, String detail, String errorCode, WebRequest request) {
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(status, detail == null ? "" : detail);
+        pd.setTitle(title);
+        pd.setType(URI.create("https://example.com/probs/" + slug(title)));
+        String instance = request.getDescription(false);
+        if (instance != null) {
+            pd.setInstance(URI.create(instance.replace("uri=", "")));
+        }
+        pd.setProperty("errorCode", errorCode);
+        String correlationId = CorrelationIdUtil.getCorrelationId();
+        if (correlationId != null) {
+            pd.setProperty("correlationId", correlationId);
+        }
+        return pd;
+    }
+
+    private static String slug(String s) {
+        return s == null ? "error" : s.toLowerCase().replaceAll("[^a-z0-9]+", "-").replaceAll("(^-|-$)", "");
     }
 }
-

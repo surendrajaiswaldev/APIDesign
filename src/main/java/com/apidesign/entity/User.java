@@ -1,8 +1,22 @@
 package com.apidesign.entity;
 
-import jakarta.persistence.*;
+import jakarta.persistence.CollectionTable;
+import jakarta.persistence.Column;
+import jakarta.persistence.ElementCollection;
+import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.ForeignKey;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.SequenceGenerator;
+import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import java.util.HashSet;
+import java.util.Set;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
@@ -11,19 +25,15 @@ import lombok.Setter;
 import lombok.experimental.SuperBuilder;
 
 /**
- * User entity representing customers in the order management system.
+ * Application user (customer / admin). Authenticated via email + bcrypt password hash.
  *
- * Relationship: User -> Orders (One-to-Many)
- * A user can have multiple orders. The relationship is managed by Order entity
- * with LAZY loading to avoid N+1 query problems.
- *
- * Why not use @Data: Avoid automatic generation of equals/hashCode on entities
- * as it can cause issues with lazy-loaded collections.
+ * Roles are persisted as a string set ({@code USER}, {@code ADMIN}) and exposed to Spring
+ * Security as authorities prefixed with {@code ROLE_}.
  */
 @Entity
-@Table(name = "USERS", uniqueConstraints = {
-    @UniqueConstraint(columnNames = "EMAIL", name = "UK_USER_EMAIL")
-})
+@Table(
+    name = "USERS",
+    uniqueConstraints = {@UniqueConstraint(columnNames = "EMAIL", name = "UK_USER_EMAIL")})
 @Getter
 @Setter
 @NoArgsConstructor
@@ -31,6 +41,11 @@ import lombok.experimental.SuperBuilder;
 @SuperBuilder
 public class User extends BaseEntity {
     private static final long serialVersionUID = 1L;
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "user_seq_gen")
+    @SequenceGenerator(name = "user_seq_gen", sequenceName = "USER_SEQ", allocationSize = 50)
+    private Long id;
 
     @NotBlank(message = "First name is required")
     @Column(name = "FIRST_NAME", length = 50, nullable = false)
@@ -45,14 +60,14 @@ public class User extends BaseEntity {
     @Column(name = "EMAIL", length = 100, nullable = false, unique = true)
     private String email;
 
+    /** BCrypt-encoded password. Never returned in DTOs. */
+    @Column(name = "PASSWORD_HASH", length = 100, nullable = false)
+    private String passwordHash;
+
     @NotBlank(message = "Phone number is required")
     @Column(name = "PHONE_NUMBER", length = 20, nullable = false)
     private String phoneNumber;
 
-    /**
-     * Street address of the user.
-     * Kept simple for this demo; can be extended to separate Address entity.
-     */
     @Column(name = "ADDRESS", length = 255)
     private String address;
 
@@ -65,41 +80,19 @@ public class User extends BaseEntity {
     @Column(name = "ZIPCODE", length = 20)
     private String zipcode;
 
-    /**
-     * Account status flag.
-     * Why not enum: Simpler for this basic implementation, can be upgraded
-     * to @Enumerated(EnumType.STRING) for type safety if needed.
-     */
     @Column(name = "IS_ACTIVE", nullable = false)
     @Builder.Default
     private Boolean isActive = true;
 
-    /**
-     * User's role/type in the system.
-     * Can be extended with role-based access control.
-     */
     @Column(name = "USER_TYPE", length = 20)
     @Builder.Default
     private String userType = "CUSTOMER";
 
-    /**
-     * Pre-persist lifecycle callback to set default values and timestamps.
-     */
-    @PrePersist
-    protected void onCreate() {
-        super.onCreate();
-        // Set defaults if not already set
-        if (this.isActive == null) {
-            this.isActive = true;
-        }
-        if (this.userType == null) {
-            this.userType = "CUSTOMER";
-        }
-    }
-
-    @PreUpdate
-    protected void onUpdate() {
-        super.onUpdate();
-    }
+    @ElementCollection(fetch = FetchType.EAGER)
+    @CollectionTable(
+        name = "USER_ROLES",
+        joinColumns = @JoinColumn(name = "USER_ID", foreignKey = @ForeignKey(name = "FK_USER_ROLES_USER")))
+    @Column(name = "ROLE", length = 30, nullable = false)
+    @Builder.Default
+    private Set<String> roles = new HashSet<>();
 }
-

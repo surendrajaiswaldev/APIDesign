@@ -1,133 +1,69 @@
 package com.apidesign.interceptor;
 
-import com.apidesign.util.CorrelationIdUtil;
+import com.apidesign.service.ExceptionAuditService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
 /**
- * Spring MVC Interceptor for handling cross-cutting concerns at HTTP level.
+ * Logs each request's start/end and triggers exception audit persistence.
  *
- * Responsibilities:
- * 1. Generate/extract correlation ID for request tracing
- * 2. Set correlation ID in MDC for logging
- * 3. Log request details (method, URL, parameters)
- * 4. Track API execution time
- * 5. Add correlation ID to response headers
- *
- * Lifecycle Methods:
- * - preHandle: Called before controller (generate correlationId)
- * - postHandle: Called after controller (log before response sent)
- * - afterCompletion: Called after response sent (cleanup MDC)
- *
- * Difference between Interceptor and AOP:
- * - Interceptor: Runs at HTTP layer (before reaching Spring core)
- * - AOP: Runs at method layer (can access method arguments, returns)
- * - Interceptor: Better for request/response concerns
- * - AOP: Better for service-layer cross-cutting concerns
- *
- * Use Interceptor for: Request ID, timing, HTTP headers
- * Use AOP for: Service logging, authentication checks, audit trails
+ * Coexists with {@code CorrelationIdFilter} (which owns the X-Correlation-Id header and
+ * MDC). This interceptor adds:
+ * <ul>
+ *   <li>per-handler timing via {@code System.nanoTime()},</li>
+ *   <li>structured request/response log lines,</li>
+ *   <li>persistent recording of exceptions or 5xx responses via
+ *       {@link ExceptionAuditService}, with deduplication against the global handler
+ *       through the {@code exception.recorded} request attribute.</li>
+ * </ul>
  */
-@Slf4j
 @Component
 public class RequestInterceptor implements HandlerInterceptor {
-    private static final String REQUEST_START_TIME = "requestStartTime";
 
-    /**
-     * Pre-processing: Called BEFORE controller method execution.
-     *
-     * Steps:
-     * 1. Extract/generate correlation ID
-     * 2. Set in MDC for logging
-     * 3. Store request start time for duration calculation
-     * 4. Log request details
-     *
-     * @param request the HTTP request
-     * @param response the HTTP response
-     * @param handler the handler (controller method)
-     * @return true to continue request processing, false to stop
-     */
+    private static final Logger log = LoggerFactory.getLogger(RequestInterceptor.class);
+    private static final String START_NANOS_ATTR = "interceptor.startNanos";
+
+    private final ExceptionAuditService exceptionAuditService;
+
+    public RequestInterceptor(ExceptionAuditService exceptionAuditService) {
+        this.exceptionAuditService = exceptionAuditService;
+    }
+
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
-        // Extract correlation ID from request header or generate new one
-        String correlationId = request.getHeader(CorrelationIdUtil.getCorrelationIdHeader());
-        if (correlationId == null || correlationId.isBlank()) {
-            correlationId = CorrelationIdUtil.generateCorrelationId();
-        }
-
-        // Set correlation ID in MDC for all log statements in this request
-        CorrelationIdUtil.setCorrelationId(correlationId);
-
-        // Store request start time for calculating duration
-        request.setAttribute(REQUEST_START_TIME, System.currentTimeMillis());
-
-        // Log request details with correlation ID (automatically included via MDC)
-        log.info("Incoming request: {} {} - Correlation ID: {}",
-                request.getMethod(),
-                request.getRequestURI(),
-                correlationId);
-
-        // Continue with normal request processing
+        request.setAttribute(START_NANOS_ATTR, System.nanoTime());
+        log.info("REQ -> {} {}", request.getMethod(), request.getRequestURI());
         return true;
     }
 
-    /**
-     * Post-processing: Called AFTER controller method execution,
-     * BEFORE response sent to client.
-     *
-     * Steps:
-     * 1. Calculate request duration
-     * 2. Log response details
-     * 3. Add correlation ID to response header (optional, helpful for clients)
-     *
-     * @param request the HTTP request
-     * @param response the HTTP response
-     * @param handler the handler
-     * @param modelAndView the model and view (if applicable)
-     */
     @Override
-    public void postHandle(HttpServletRequest request, HttpServletResponse response,
-                          Object handler, org.springframework.web.servlet.ModelAndView modelAndView) {
-        // Calculate request duration
-        long startTime = (long) request.getAttribute(REQUEST_START_TIME);
-        long duration = System.currentTimeMillis() - startTime;
+    public void afterCompletion(
+        HttpServletRequest request, HttpServletResponse response, Object handler, Exception ex) {
 
-        // Log response with execution time
-        log.info("Outgoing response: {} - Status: {} - Duration: {}ms",
-                request.getRequestURI(),
-                response.getStatus(),
-                duration);
+        long durationMs = computeDurationMs(request);
+        int status = response.getStatus();
+        log.info("REQ {} {} -> {} in {}ms", request.getMethod(), request.getRequestURI(), status, durationMs);
 
-        // Add correlation ID to response header (helps clients track request)
-        response.setHeader(CorrelationIdUtil.getCorrelationIdHeader(),
-                          CorrelationIdUtil.getCorrelationId());
-    }
-
-    /**
-     * Cleanup: Called AFTER response is sent to client.
-     * IMPORTANT: Always clean up MDC to prevent leaks in thread pools.
-     *
-     * Spring often reuses threads; if MDC isn't cleared, the correlation ID
-     * from one request might appear in logs of a completely different request!
-     *
-     * @param request the HTTP request
-     * @param response the HTTP response
-     * @param handler the handler
-     * @param ex any exception thrown during request processing
-     */
-    @Override
-    public void afterCompletion(HttpServletRequest request, HttpServletResponse response,
-                                Object handler, Exception ex) {
-        // Log any exceptions that occurred during request
-        if (ex != null) {
-            log.error("Request failed with exception", ex);
+        boolean alreadyRecorded =
+            Boolean.TRUE.equals(request.getAttribute(ExceptionAuditService.RECORDED_ATTR));
+        if (alreadyRecorded) {
+            return;
         }
 
-        // CRITICAL: Clear correlation ID from MDC to prevent leaks in thread pool
-        CorrelationIdUtil.clearCorrelationId();
+        if (ex != null || status >= 500) {
+            exceptionAuditService.record(request, status, ex, durationMs);
+        }
+    }
+
+    private static long computeDurationMs(HttpServletRequest request) {
+        Object startObj = request.getAttribute(START_NANOS_ATTR);
+        if (startObj instanceof Long start) {
+            return (System.nanoTime() - start) / 1_000_000L;
+        }
+        return 0L;
     }
 }
-

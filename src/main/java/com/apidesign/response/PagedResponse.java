@@ -1,49 +1,29 @@
 package com.apidesign.response;
 
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Getter;
-import lombok.NoArgsConstructor;
-import lombok.Setter;
+import java.util.List;
 import org.springframework.data.domain.Page;
 
-import java.util.List;
+public record PagedResponse<T>(
+    List<T> content,
+    int pageNumber,
+    int pageSize,
+    long totalElements,
+    int totalPages,
+    boolean isFirst,
+    boolean isLast,
+    boolean hasNext,
+    boolean hasPrevious) {
 
-/**
- * Wrapper for paginated API responses.
- * Handles page information and navigation details.
- */
-@Getter
-@Setter
-@NoArgsConstructor
-@AllArgsConstructor
-@Builder
-public class PagedResponse<T> {
-    private List<T> content;
-    private int pageNumber;
-    private int pageSize;
-    private long totalElements;
-    private int totalPages;
-    private boolean isFirst;
-    private boolean isLast;
-    private boolean hasNext;
-    private boolean hasPrevious;
-
-    /**
-     * Factory method to create PagedResponse from Spring Page object.
-     */
     public static <T> PagedResponse<T> from(Page<T> page) {
-        return PagedResponse.<T>builder()
-                .content(page.getContent())
-                .pageNumber(page.getNumber())
-                .pageSize(page.getSize())
-                .totalElements(page.getTotalElements())
-                .totalPages(page.getTotalPages())
-                .isFirst(page.isFirst())
-                .isLast(page.isLast())
-                .hasNext(page.hasNext())
-                .hasPrevious(page.hasPrevious())
-                .build();
+        return new PagedResponse<>(
+            page.getContent(),
+            page.getNumber(),
+            page.getSize(),
+            page.getTotalElements(),
+            page.getTotalPages(),
+            page.isFirst(),
+            page.isLast(),
+            page.hasNext(),
+            page.hasPrevious());
     }
 }
-

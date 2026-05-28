@@ -4,13 +4,13 @@ spring:
       on-profile: dev
 
   datasource:
-    url: jdbc:oracle:thin:@dev-oracle-host:1521/FREEPDB1
-    username: ${DB_USERNAME:system}
-    password: ${DB_PASSWORD:password}
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
 
   jpa:
     hibernate:
-      ddl-auto: validate  # Only validate schema in dev environment
+      ddl-auto: validate
     show-sql: false
 
 logging:
@@ -19,12 +19,18 @@ logging:
     com.apidesign: INFO
     org.hibernate.SQL: INFO
 
+app:
+  security:
+    jwt:
+      enabled: true
+  validation:
+    enabled: true
+
 springdoc:
   api-docs:
     path: /api-docs
   swagger-ui:
-    path: /swagger-ui.html
+    path: /swagger-ui
     enabled: true
     operations-sorter: method
     tags-sorter: alpha
-

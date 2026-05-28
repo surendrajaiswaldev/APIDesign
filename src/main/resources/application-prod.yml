@@ -4,8 +4,8 @@ spring:
       on-profile: prod
 
   datasource:
-    url: jdbc:oracle:thin:@prod-oracle-host:1521/FREEPDB1
-    username: ${DB_USERNAME:system}
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
     password: ${DB_PASSWORD}
     hikari:
       minimum-idle: 10
@@ -16,8 +16,8 @@ spring:
 
   jpa:
     hibernate:
-      ddl-auto: validate  # Production must validate only
-      format_sql: false # Don't format SQL in production
+      ddl-auto: validate
+      format_sql: false
     show-sql: false
 
 logging:
@@ -26,13 +26,10 @@ logging:
     com.apidesign: INFO
   file:
     name: /var/log/order-management-system/application.log
-    max-size: 10MB
-    max-history: 30
 
 springdoc:
   swagger-ui:
-    enabled: false  # Disable Swagger UI in production for security
-
+    enabled: false
 
 server:
   port: 8443
@@ -42,3 +39,9 @@ server:
     key-store-password: ${SSL_KEYSTORE_PASSWORD}
     key-store-type: PKCS12
 
+app:
+  security:
+    jwt:
+      enabled: true
+  validation:
+    enabled: true

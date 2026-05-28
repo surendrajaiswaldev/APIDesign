@@ -1,41 +1,29 @@
 package com.apidesign.constants;
 
 /**
- * Order statuses representing the lifecycle of an order in the system.
+ * Lifecycle states for an order.
  *
- * PENDING: Order created but not yet confirmed
- * CONFIRMED: Order is confirmed and ready for processing
- * SHIPPED: Order has been shipped to customer
- * DELIVERED: Order delivered to customer
- * CANCELLED: Order cancelled by user or system
+ * Transitions enforced by {@link #isValidTransition(OrderStatus, OrderStatus)}.
  */
-public final class OrderStatus {
-    private OrderStatus() {
-        throw new UnsupportedOperationException("Utility class cannot be instantiated");
-    }
-
-    public static final String PENDING = "PENDING";
-    public static final String CONFIRMED = "CONFIRMED";
-    public static final String SHIPPED = "SHIPPED";
-    public static final String DELIVERED = "DELIVERED";
-    public static final String CANCELLED = "CANCELLED";
+public enum OrderStatus {
+    PENDING,
+    CONFIRMED,
+    SHIPPED,
+    DELIVERED,
+    CANCELLED;
 
     /**
-     * Checks if status transition is valid
+     * @return true if {@code from -> to} is a permitted transition.
      */
-    public static boolean isValidTransition(String from, String to) {
+    public static boolean isValidTransition(OrderStatus from, OrderStatus to) {
         if (from == null || to == null) {
             return false;
         }
-
         return switch (from) {
-            case PENDING -> to.equals(CONFIRMED) || to.equals(CANCELLED);
-            case CONFIRMED -> to.equals(SHIPPED) || to.equals(CANCELLED);
-            case SHIPPED -> to.equals(DELIVERED);
-            case DELIVERED -> false; // Terminal state
-            case CANCELLED -> false; // Terminal state
-            default -> false;
+            case PENDING -> to == CONFIRMED || to == CANCELLED;
+            case CONFIRMED -> to == SHIPPED || to == CANCELLED;
+            case SHIPPED -> to == DELIVERED;
+            case DELIVERED, CANCELLED -> false;
         };
     }
 }
-

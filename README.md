@@ -1,1082 +1,496 @@
-# E-Commerce Order Management System
+# Order Management System
 
-Production-grade Spring Boot backend application for managing e-commerce orders, users, and products with enterprise-level coding standards, clean architecture, and production-ready practices.
+A JSON-over-HTTP order management service: users, products, orders, with JWT auth,
+RFC 7807 error responses, optimistic locking, and a token-bucket rate limiter.
 
-## 📋 Table of Contents
-- [Architecture](#architecture)
-- [Tech Stack](#tech-stack)
-- [Project Structure](#project-structure)
-- [Getting Started](#getting-started)
-- [Database Setup](#database-setup)
-- [API Endpoints](#api-endpoints)
-- [Key Features](#key-features)
-- [Architectural Decisions](#architectural-decisions)
-- [Coding Standards](#coding-standards)
+## Tech stack
 
-## 🏗️ Architecture
+- Java 21, Spring Boot 3.3
+- Spring Web MVC (servlet, virtual threads enabled)
+- Spring Data JPA + Hibernate (Oracle in prod/dev, H2 in tests)
+- Spring Security 6 (JWT, BCrypt password hashing)
+- MapStruct 1.6 for DTO ↔ entity mapping
+- Lombok for entity boilerplate (DTOs are records, no Lombok)
+- Bucket4j 8.14 + Caffeine for rate limiting
+- Micrometer Prometheus + OpenTelemetry OTLP for metrics and tracing
+- SpringDoc OpenAPI for Swagger UI
+- Maven (Spotless + Jacoco plugins configured)
 
-This project follows **Clean Layered Architecture** with clear separation of concerns:
+## Architecture
 
-```
-┌─────────────────────────────────────────────────┐
-│         REST Controllers (HTTP Layer)            │  Request Handling
-├─────────────────────────────────────────────────┤
-│      Global Exception Handler & Advice           │  Cross-cutting Concerns
-├─────────────────────────────────────────────────┤
-│ Service Layer (Business Logic & Transactions)    │  Business Rules
-├─────────────────────────────────────────────────┤
-│   Repository Layer (Data Access & Queries)       │  Database Operations
-├─────────────────────────────────────────────────┤
-│        Entity Layer (Domain Models)              │  Data Representation
-├─────────────────────────────────────────────────┤
-│    Configuration & Cross-Cutting Concerns        │  AOP, Interceptors
-└─────────────────────────────────────────────────┘
-```
-
-### Layer Responsibilities
-
-**Controller Layer** (`controller/`)
-- Map HTTP requests to service methods
-- Validate path/query parameters
-- Return formatted HTTP responses
-- Add HATEOAS links (optional REST enrichment)
-- **MUST remain thin** - no business logic
-
-**Service Layer** (`service/`)
-- Implement business logic
-- Validate business rules
-- Handle transactions (@Transactional)
-- Coordinate between repositories
-- Throw appropriate exceptions
-
-**Repository Layer** (`repository/`)
-- Database query execution only
-- Spring Data JPA derived queries
-- JPQL @Query methods
-- Native SQL for complex queries
-- No business logic
-
-**Entity Layer** (`entity/`)
-- JPA domain models
-- ORM annotations
-- Relationships (One-to-Many, Many-to-One)
-- Audit fields (createdAt, updatedAt)
-- Helper methods only
-
-**Cross-Cutting Concerns**
-- **Interceptors**: HTTP-level request/response handling (correlation IDs, request timing)
-- **AOP Aspects**: Method-level concerns (service logging, execution time, exception handling)
-- **Exception Handling**: Global @RestControllerAdvice for standardized error responses
-- **Response Formatting**: Standardized API response structures
-
-## 🚀 Tech Stack
-
-| Component | Technology | Version |
-|-----------|-----------|---------|
-| Language | Java | 21 |
-| Framework | Spring Boot | 3.3.0 |
-| ORM | Spring Data JPA/Hibernate | Latest |
-| Database | Oracle (FREEPDB1) | 21c+ |
-| Connection Pool | HikariCP | 5.x |
-| Mapping | MapStruct | 1.5.5 |
-| Boilerplate Reduction | Lombok | 1.18.30 |
-| REST Enhancement | Spring HATEOAS | 2.1.1 |
-| AOP | Spring AOP | 6.0+ |
-| Build Tool | Maven | 3.8+ |
-| Testing | JUnit 5 + Mockito | Latest |
-
-## 📁 Project Structure
+Layered:
 
 ```
-src/main/java/com/apidesign/
-├── ApiDesignApplication.java          # Main Spring Boot application
-├── config/
-│   ├── DatabaseConfig.java            # JPA/Hibernate configuration
-│   ├── WebConfig.java                 # Interceptor registration & MVC config
-│   └── ValidationConfig.java          # Bean validation setup
-├── controller/                         # HTTP request handlers
-│   ├── UserController.java
-│   ├── ProductController.java
-│   └── OrderController.java
-├── service/                            # Business logic & transactions
-│   ├── UserService.java
-│   ├── ProductService.java
-│   └── OrderService.java
-├── repository/                         # Data access layer
-│   ├── UserRepository.java
-│   ├── ProductRepository.java
-│   ├── OrderRepository.java
-│   └── OrderItemRepository.java
-├── entity/                             # JPA domain models
-│   ├── BaseEntity.java                 # Common audit fields
-│   ├── User.java
-│   ├── Product.java
-│   ├── Order.java
-│   └── OrderItem.java
-├── dto/                                # Data transfer objects
-│   ├── UserDTO.java
-│   ├── CreateUserRequest.java
-│   ├── UpdateUserRequest.java
-│   ├── ProductDTO.java
-│   ├── CreateProductRequest.java
-│   ├── UpdateProductRequest.java
-│   ├── OrderDTO.java
-│   ├── OrderItemDTO.java
-│   └── CreateOrderRequest.java
-├── mapper/                             # MapStruct DTO mappers
-│   ├── UserMapper.java
-│   ├── ProductMapper.java
-│   ├── OrderMapper.java
-│   └── OrderItemMapper.java
-├── exception/                          # Custom exceptions
-│   ├── BaseException.java
-│   ├── ResourceNotFoundException.java
-│   ├── BusinessLogicException.java
-│   ├── ValidationException.java
-│   └── DatabaseException.java
-├── aspect/                             # AOP aspects
-│   └── LoggingAspect.java             # Service layer logging & timing
-├── interceptor/                        # HTTP interceptors
-│   └── RequestInterceptor.java        # Correlation ID & request tracking
-├── advice/                             # Exception handlers
-│   └── GlobalExceptionHandler.java    # REST @ExceptionHandler
-├── response/                           # API response models
-│   ├── ApiResponse.java               # Generic response wrapper
-│   ├── PagedResponse.java             # Pagination response
-│   └── ValidationErrorResponse.java   # Validation error details
-├── constants/                          # Application constants
-│   ├── OrderStatus.java
-│   ├── ApiEndpoints.java
-│   └── ErrorCodes.java
-└── util/                               # Utility classes
-    ├── CorrelationIdUtil.java         # MDC correlation ID management
-    └── (other utilities)
-
-src/main/resources/
-├── application.yml                     # Main configuration
-├── application-local.yml               # Local development profile
-├── application-dev.yml                 # Development profile
-└── application-prod.yml                # Production profile
+controller  -> service  -> repository  -> JPA / Oracle
+                         \
+                          \-> domain entities (BaseEntity audit fields)
 ```
 
-## 🔧 Getting Started
+- DTOs are records; mappers convert at the controller/service boundary.
+- All write operations are transactional. Stock writes use atomic SQL (UPDATE WHERE
+  qty >= ?) instead of read-modify-write.
+- Errors surface as RFC 7807 `application/problem+json`. Success responses use a thin
+  `ApiResponse<T>` envelope.
 
-### Prerequisites
-- Java 21 JDK installed
-- Maven 3.8+
-- Oracle FREEPDB1 running locally
-- Git
+## Quickstart
 
-### Local Development Setup
+```bash
+# 1. Start Oracle locally (FREEPDB1 on 1521) however you prefer (docker, OracleXE, ...).
+#    The local profile defaults to system/password for credentials.
 
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd APIDesign
-   ```
+# 2. Run the app — the local profile is the default for mvn spring-boot:run.
+mvn spring-boot:run
 
-2. **Build the project**
-   ```bash
-   mvn clean install
-   ```
+# 3. Hit Swagger UI.
+open http://localhost:8080/api/v1/swagger-ui/index.html
 
-3. **Set active profile to local**
-   ```bash
-   # The application will use application-local.yml by default
-   ```
+# 4. Register and login (see Authentication below).
 
-4. **Run the application**
-   ```bash
-   mvn spring-boot:run
-   # OR
-   java -jar target/order-management-system-1.0.0.jar --spring.profiles.active=local
-   ```
-
-5. **API Documentation**
-   - Swagger/Springdoc OpenAPI (if integrated): `http://localhost:8080/api/v1/swagger-ui.html`
-   - Application runs on: `http://localhost:8080/api/v1`
-
-## 🗄️ Database Setup
-
-### Oracle FREEPDB1 Local Configuration
-
-**Connection Details**
-```properties
-jdbc.url=jdbc:oracle:thin:@localhost:1521/FREEPDB1
-jdbc.username=system
-jdbc.password=password
+# 5. Optional: copy .env.example to .env and override anything.
+cp .env.example .env
 ```
 
-**HikariCP Connection Pool Configuration** (in application.yml)
-```yaml
-spring:
-  datasource:
-    hikari:
-      minimum-idle: 5           # Keep 5 connections ready
-      maximum-pool-size: 20     # Max 20 connections
-      connection-timeout: 30000 # Wait 30s for connection
-      idle-timeout: 600000      # Close after 10min idle
-      max-lifetime: 1800000     # Max 30min connection lifetime
+Zero env vars required for local dev. The `local` profile activates automatically via
+the Spring Boot Maven plugin configuration.
+
+The `local` profile also disables two enforcement layers by default:
+
+- **JWT authentication is OFF** (`app.security.jwt.enabled: false`). Every endpoint is
+  callable without a token. The `/auth/token` endpoint still works and still issues a
+  real JWT — flip the flag back to `true` to test authenticated flows.
+- **Bean validation is OFF** (`app.validation.enabled: false`). `@Valid` / `@Validated`
+  annotations stay on the source but produce no errors. Useful for iterating on shapes;
+  not safe outside `local`.
+
+Both flags are `true` in `dev` and `prod`.
+
+## Configuration
+
+All credentials are env-var driven with sensible defaults only in the `local` profile.
+
+| Variable                  | Required (dev/prod) | Default (local) | Description                       |
+|--------------------------|---------------------|-----------------|-----------------------------------|
+| `SPRING_PROFILES_ACTIVE` | recommended         | `local`         | Profile to activate               |
+| `DB_URL`                 | yes                 | localhost FREEPDB1 | JDBC URL                        |
+| `DB_USERNAME`            | yes                 | `system`        | Database user                     |
+| `DB_PASSWORD`            | yes                 | `password`      | Database password                 |
+| `JWT_SECRET`             | yes                 | dev placeholder | HMAC-SHA256 signing key (>= 32B)  |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | no             | localhost:4318  | OTLP receiver for traces          |
+| `SSL_KEYSTORE_PATH`      | prod only           | -               | PKCS12 keystore                   |
+| `SSL_KEYSTORE_PASSWORD`  | prod only           | -               | Keystore password                 |
+
+See `.env.example`. In `dev` and `prod` profiles the credentials have no default and
+Spring will fail fast at startup if they're missing.
+
+### Profiles
+
+- `local` — committed defaults. `ddl-auto: create-drop`. Verbose SQL logging.
+- `dev`   — env vars required. `ddl-auto: validate`.
+- `prod`  — env vars required. `ddl-auto: validate`. SSL on. Swagger UI off.
+
+### Secrets
+
+`.env`, `application-local-secrets.yml`, and `*.local-secrets.yml` are gitignored. Do
+not commit credentials.
+
+## Authentication
+
+JWT bearer tokens, HS256. Register → log in → use token.
+
+> **Note:** the `local` profile defaults to `app.security.jwt.enabled=false`, so every
+> endpoint is open. The examples below assume the JWT flag is on (`dev`/`prod` default,
+> or override locally with `--app.security.jwt.enabled=true`).
+
+```bash
+# Register
+curl -X POST http://localhost:8080/api/v1/auth/register \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "firstName":"Ada","lastName":"Lovelace","email":"ada@example.com",
+    "password":"correct horse battery staple","phoneNumber":"1234567890"
+  }'
+
+# Login (returns ApiResponse envelope)
+TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"ada@example.com","password":"correct horse battery staple"}' \
+  | jq -r '.data.accessToken')
+
+# Or: explicit "getJWT" endpoint — bare TokenResponse body, no envelope, no validation.
+# Always callable, even when JWT enforcement is off.
+TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/token \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"ada@example.com","password":"correct horse battery staple"}' \
+  | jq -r '.accessToken')
+
+# Call a protected endpoint
+curl http://localhost:8080/api/v1/users/1 -H "Authorization: Bearer $TOKEN"
 ```
 
-### Why HikariCP?
-- **Fastest connection pool** available for Java
-- Lower latency compared to other pools
-- Efficient resource usage
-- Battle-tested in production
+Roles: `USER` (default), `ADMIN`. Admin-only endpoints include user deletion, product
+create/update/delete, low-stock listing, order-status overrides, and listing orders
+by status. Use `@PreAuthorize("hasRole('ADMIN')")` to extend this set.
 
-### Creating Database & Schema
+To make a user an admin, set `roles` to `{"ADMIN","USER"}` directly in the database
+for now (no admin-promotion endpoint is exposed; add one in your application code if
+you need it).
+
+## API reference
+
+Base path: `/api/v1`. Full schema in Swagger UI.
+
+| Method | Path                            | Roles needed         |
+|-------:|---------------------------------|----------------------|
+| POST   | `/auth/register`                | (public)             |
+| POST   | `/auth/login`                   | (public)             |
+| POST   | `/auth/token`                   | (public, no validation) |
+| GET    | `/users`                        | USER                 |
+| GET    | `/users/{id}`                   | USER                 |
+| GET    | `/users/email/{email}`          | USER                 |
+| PUT    | `/users/{id}`                   | USER                 |
+| DELETE | `/users/{id}`                   | ADMIN                |
+| POST   | `/users/{id}/deactivate`        | USER                 |
+| POST   | `/products`                     | ADMIN                |
+| GET    | `/products`                     | USER                 |
+| GET    | `/products/{id}`                | USER                 |
+| GET    | `/products/category/{category}` | USER                 |
+| GET    | `/products/search`              | USER                 |
+| GET    | `/products/lowstock`            | ADMIN                |
+| PUT    | `/products/{id}`                | ADMIN                |
+| DELETE | `/products/{id}`                | ADMIN                |
+| POST   | `/orders`                       | USER                 |
+| GET    | `/orders/{id}`                  | USER                 |
+| GET    | `/orders/number/{orderNumber}`  | USER                 |
+| GET    | `/orders/user/{userId}`         | USER                 |
+| GET    | `/orders/by-status/{status}`    | ADMIN                |
+| PUT    | `/orders/{id}/status`           | ADMIN                |
+| POST   | `/orders/{id}/cancel`           | USER                 |
+| GET    | `/rate-limit/status`            | (public)             |
+| GET    | `/admin/rate-limit/buckets`     | ADMIN                |
+
+Success envelope:
+
+```json
+{"timestamp":"...","status":200,"message":"...","data":{...}}
+```
+
+Error responses use bare RFC 7807 `application/problem+json`:
+
+```json
+{
+  "type":"https://example.com/probs/validation-failed",
+  "title":"Validation failed",
+  "status":400,
+  "detail":"One or more fields failed validation",
+  "instance":"/api/v1/users",
+  "errorCode":"VAL-001",
+  "correlationId":"...",
+  "fieldErrors":[{"field":"email","message":"Email should be valid","rejectedValue":"x"}]
+}
+```
+
+## Implemented learning features
+
+The fourth pass added a layer of "production-grade Spring" features. Each one is a
+self-contained learning surface — touch the file paths, read the canonical patterns,
+flex it with the local curl command.
+
+| # | Feature | What it teaches | Key file(s) | Try it locally |
+|---|---|---|---|---|
+| 1 | **Flyway migrations** | DB-schema-as-code, versioned migrations, env-portable DDL. JPA `validate` instead of `ddl-auto`. | `src/main/resources/db/migration/V1..V4__*.sql`, `application.yml` (`spring.flyway.*`) | `mvn spring-boot:run` — Flyway runs on boot, see `flyway_schema_history` populate. |
+| 2 | **Async events + listeners** | Domain events as records, `@TransactionalEventListener(AFTER_COMMIT)`, custom executor for `@Async`. | `event/`, `event/listener/NotificationListener.java`, `config/AsyncConfig.java`, wired in `service/OrderService.java` | `curl -X POST .../orders -d '...'` — watch `event-1` thread log "Notification: order N created". |
+| 3 | **Spring Cache + Caffeine** | `@Cacheable` / `@CacheEvict`, cache spec tuning, key SpEL, `recordStats()` for metrics. | `config/CacheConfig.java`, `service/ProductService.java` | `curl .../products/1` twice — second call skips the repository (DEBUG log shows it). |
+| 4 | **@Scheduled + ShedLock** | Cron-driven jobs, distributed locking so multi-instance deployments don't double-run. | `config/SchedulingConfig.java`, `job/PendingOrderCleanupJob.java`, `V4__shedlock.sql` | Top of every hour the job sweeps PENDING orders > 24h old. Manually invoke by lowering the cron in dev. |
+| 5 | **Refresh-token rotation** | Production JWT flow: short-lived access + long-lived refresh, hash-only storage, family-level revoke on reuse-after-revoke. | `entity/RefreshToken.java`, `repository/RefreshTokenRepository.java`, `service/AuthService.refresh(...)`, `security/JwtService.hashToken`, `controller/AuthController.java` | `curl -X POST .../auth/refresh -d '{"refreshToken":"..."}'` to rotate; reuse the old one to see 401 + family-wide revoke. |
+| 6 | **Testcontainers integration test** | Real Oracle in Docker, `@DynamicPropertySource`, `@SpringBootTest` end-to-end. | `src/test/java/com/apidesign/integration/UserIntegrationTest.java` | `mvn test -Dtest=UserIntegrationTest` (Docker must be running). |
+| 7 | **Resilience4j** | Declarative `@CircuitBreaker` / `@Retry` / `@Bulkhead` + fallback method. | `service/PaymentService.java`, `controller/PaymentController.java`, `application.yml` (`resilience4j.*`) | Loop `POST /payments/charge` — flip from real refs to `DEGRADED:order-N` once breaker opens. |
+| 8 | **Custom health indicators** | `AbstractHealthIndicator`, informational vs probing health, surfacing infrastructure to `/actuator/health`. | `health/RateLimitCacheHealthIndicator.java`, `health/ExceptionAuditHealthIndicator.java` | `curl .../actuator/health` (when authorized, full details — components include `rateLimitCache` and `exceptionAudit`). |
+| 9 | **ArchUnit rules** | Static architectural invariants enforced at test time. | `src/test/java/com/apidesign/arch/ArchitectureRulesTest.java` | `mvn test -Dtest=ArchitectureRulesTest`. |
+| 10 | **WebSocket (STOMP)** | Live server-push, broker config, listener-as-bridge from domain events to topics. | `config/WebSocketConfig.java`, `event/listener/WebSocketOrderBridge.java` | Connect a SockJS client to `ws://localhost:8080/api/v1/ws`, SUBSCRIBE to `/topic/orders/<userId>`, then create an order. (Note: JWT-on-handshake is out of scope — see Future scope.) |
+
+### One-time DB cleanup when switching from `ddl-auto` to Flyway
+
+If you previously ran the app under `ddl-auto: create-drop` or `update`, the schema
+exists but Flyway has never logged it. Pick one:
+
+- **Easiest (local only)**: drop the application objects and let Flyway run from V1.
 
 ```sql
--- Connect as system user
-sqlplus system/password@localhost:1521/FREEPDB1
-
--- Create sequence for ID generation (used by @SequenceGenerator)
-CREATE SEQUENCE ID_SEQ START WITH 1 INCREMENT BY 1 NOCYCLE;
-
--- Hibernate will auto-create/update tables based on @Entity annotations
--- when ddl-auto is set to 'update' in application-local.yml
+-- Connect to your local Oracle as the application user and run:
+DROP TABLE ORDER_ITEMS CASCADE CONSTRAINTS;
+DROP TABLE ORDERS CASCADE CONSTRAINTS;
+DROP TABLE USER_ROLES CASCADE CONSTRAINTS;
+DROP TABLE PRODUCTS CASCADE CONSTRAINTS;
+DROP TABLE "USERS" CASCADE CONSTRAINTS;
+DROP TABLE APPLICATION_EXCEPTION CASCADE CONSTRAINTS;
+DROP SEQUENCE USER_SEQ;
+DROP SEQUENCE PRODUCT_SEQ;
+DROP SEQUENCE ORDER_SEQ;
+DROP SEQUENCE ORDER_ITEM_SEQ;
+DROP SEQUENCE APP_EXCEPTION_SEQ;
+-- Then start the app — Flyway will apply V1..V4 from scratch.
 ```
 
-### Table Audit Fields
+- **Adopt existing schema**: keep tables as-is and let Flyway baseline. `spring.flyway.baseline-on-migrate: true` is already set in `application.yml`, so the first run creates a `flyway_schema_history` row at the highest applied version and only applies *newer* scripts. Use this if your local DB already contains data you don't want to drop.
 
-All entities automatically include:
-- `CREATED_AT`: Entity creation timestamp
-- `UPDATED_AT`: Last modification timestamp
-- `CREATED_BY`: User creating entity
-- `UPDATED_BY`: User last modifying entity
+## Feature flags
 
-## 📡 API Endpoints
+Four runtime flags govern the major cross-cutting layers. Defaults are tuned for
+production safety; the `local` profile relaxes two of them for developer ergonomics.
 
-### Base URL
-```
-http://localhost:8080/api/v1
-```
+| Flag                                | `application.yml` (base) | `local` | `dev` | `prod` | Effect when `false` |
+|------------------------------------|--------------------------|---------|-------|--------|---------------------|
+| `app.security.jwt.enabled`         | `true`                   | `false` | `true`| `true` | JWT filter not registered; every endpoint `permitAll()`. Method security (`@PreAuthorize`) not activated. |
+| `app.validation.enabled`           | `true`                   | `false` | `true`| `true` | `@Valid` / `@Validated` become no-ops. Source annotations stay; runtime swallows them. |
+| `app.rate-limit.enabled`           | `true`                   | `true`  | `true`| `true` | `RateLimitFilter` passes through without consuming bucket tokens. |
+| `app.audit.exceptions.enabled`     | `true`                   | `true`  | `true`| `true` | `ExceptionAuditService.record(...)` returns immediately; no rows in `APPLICATION_EXCEPTION`. Request log lines unaffected. |
 
-### User Management
+Override per run with `--app.security.jwt.enabled=true` on the command line, environment
+variable `APP_SECURITY_JWT_ENABLED=true`, or a profile-specific YAML.
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/users` | Create new user |
-| GET | `/users` | List all active users (paginated) |
-| GET | `/users/{id}` | Get user by ID |
-| GET | `/users/email/{email}` | Get user by email |
-| PUT | `/users/{id}` | Update user |
-| DELETE | `/users/{id}` | Delete user |
-| POST | `/users/{id}/deactivate` | Deactivate user (soft delete) |
+## Exception logging
 
-### Product Management
+Every uncaught exception (and every response with status >= 500) is persisted to the
+`APPLICATION_EXCEPTION` Oracle table by `ExceptionAuditService`. The pipeline:
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/products` | Create new product |
-| GET | `/products` | List all products (paginated) |
-| GET | `/products/{id}` | Get product by ID |
-| GET | `/products/category/{category}` | Get products by category |
-| GET | `/products/search` | Search products by price/category |
-| GET | `/products/lowstock` | Get low-stock products |
-| PUT | `/products/{id}` | Update product |
-| DELETE | `/products/{id}` | Delete product |
+1. `RequestCachingFilter` wraps body-carrying requests in a `ContentCachingRequestWrapper`
+   so the body can be re-read after the controller has consumed the input stream.
+2. `RequestInterceptor` records start/end + duration per handler, and on `afterCompletion`
+   calls the audit service whenever an exception leaked out or the response status >= 500.
+3. `GlobalExceptionHandler` calls the audit service from each `@ExceptionHandler` so 4xx
+   responses (which never throw past Spring's advice) still get a row.
+4. A request-scoped attribute `exception.recorded` prevents double-recording when the
+   handler and the interceptor would both fire for the same request.
 
-### Order Management
+Table schema (Hibernate `ddl-auto: update` creates it on first boot):
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/orders` | Create new order |
-| GET | `/orders/{id}` | Get order by ID |
-| GET | `/orders/number/{orderNumber}` | Get order by number |
-| GET | `/orders/user/{userId}` | List orders for user |
-| GET | `/orders/by-status/{status}` | List orders by status |
-| PUT | `/orders/{id}/status` | Update order status |
-| POST | `/orders/{id}/cancel` | Cancel order |
+| Column             | Type           | Nullable | Notes                                       |
+|--------------------|----------------|----------|---------------------------------------------|
+| `id`               | `NUMBER`       | no       | `APP_EXCEPTION_SEQ` (allocationSize=50)     |
+| `correlation_id`   | `VARCHAR2(64)` | yes      | From MDC; matches `X-Correlation-Id` header |
+| `http_method`      | `VARCHAR2(10)` | yes      |                                             |
+| `request_path`     | `VARCHAR2(512)`| yes      | `request.getRequestURI()`                   |
+| `query_string`     | `VARCHAR2(2048)`| yes     |                                             |
+| `request_body`     | `CLOB`         | yes      | Truncated to 4096 chars                     |
+| `response_status`  | `NUMBER`       | yes      |                                             |
+| `exception_class`  | `VARCHAR2(256)`| yes      | Fully qualified class name                  |
+| `exception_message`| `CLOB`         | yes      | Truncated to 2048 chars                     |
+| `stack_trace`      | `CLOB`         | yes      | Truncated to 8192 chars                     |
+| `user_id`          | `VARCHAR2(128)`| yes      | From SecurityContext when present           |
+| `client_ip`        | `VARCHAR2(64)` | yes      | Honors `X-Forwarded-For`                    |
+| `duration_ms`      | `NUMBER`       | yes      | From the interceptor; `0` if not measured   |
+| audit columns      | -              | -        | `created_at` / `updated_at` / `created_by`  |
 
-### Query Parameters
+Query failures by correlation ID:
 
-**Pagination & Sorting**
-```
-?page=0&size=20&sort=firstName,asc
-```
-
-- `page`: 0-based page number
-- `size`: Items per page
-- `sort`: Column name and direction (asc/desc)
-
-### Response Format
-
-All successful responses follow this structure:
-```json
-{
-  "timestamp": "2026-05-09T10:30:00",
-  "status": 200,
-  "message": "Success message",
-  "data": {
-    "id": 1,
-    "name": "John Doe",
-    ...
-  }
-}
+```sql
+SELECT id, response_status, exception_class, SUBSTR(exception_message, 1, 200)
+FROM application_exception
+WHERE correlation_id = '<id>'
+ORDER BY created_at DESC;
 ```
 
-### Error Response Format
+Or via `ApplicationExceptionRepository.findByCorrelationIdOrderByCreatedAtDesc(...)` in
+code. Persistence runs in `REQUIRES_NEW` so audit succeeds even if the calling transaction
+is rolling back; failures during the audit write itself are logged at ERROR and swallowed
+so they can never break the response.
 
-```json
-{
-  "timestamp": "2026-05-09T10:30:00",
-  "status": 404,
-  "message": "User not found with ID: 999",
-  "errorCode": "USER-001"
-}
+Toggle off with `app.audit.exceptions.enabled=false` to skip persistence (request logging
+remains).
+
+## Rate limiting
+
+Token bucket per principal (auth) or IP (unauth), keyed via Bucket4j with a Caffeine
+cache (capacity 100k, TTL 10m).
+
+Defaults in `application.yml`:
+
+```yaml
+app:
+  rate-limit:
+    enabled: true
+    default-requests-per-minute: 60
+    default-burst: 10
+    authenticated-multiplier: 5.0
+    endpoints: {}
 ```
 
-### Validation Error Response
+Per-endpoint overrides:
 
-```json
-{
-  "timestamp": "2026-05-09T10:30:00",
-  "status": 400,
-  "message": "Validation failed",
-  "path": "/users",
-  "errors": [
-    {
-      "field": "email",
-      "message": "Email should be valid",
-      "rejectedValue": "invalid-email"
-    }
-  ]
-}
+```yaml
+app:
+  rate-limit:
+    endpoints:
+      productSearch:
+        path-pattern: "/products/search"
+        requests-per-minute: 30
+        burst: 5
 ```
 
-## 🎯 Key Features
+Skipped paths: `/auth/login`, `/auth/register`, `/actuator/health`, `/actuator/info`,
+`/swagger-ui/**`, `/api-docs/**`, `/rate-limit/status`, `/admin/rate-limit/**`.
 
-### 1. Complex Order Management
-- Multi-item order creation with stock validation
-- Automatic inventory reduction
-- Order cancellation with stock return
-- Status transitions with state machine validation
-  - PENDING → CONFIRMED, CANCELLED
-  - CONFIRMED → SHIPPED, CANCELLED
-  - SHIPPED → DELIVERED (terminal)
+When a request is rejected the response is HTTP 429 with `Retry-After`,
+`X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` headers and a
+ProblemDetail body whose `type` is `https://example.com/probs/rate-limited`.
 
-### 2. Query Optimization (N+1 Prevention)
-- **JOIN FETCH** in JPQL: `SELECT o FROM Order o JOIN FETCH o.user`
-- **@EntityGraph**: Declarative relationship loading
-- Examples in `OrderRepository.java`
+### Observability
 
-### 3. Database Query Approaches
+Two introspection endpoints and three Micrometer meters surface what the limiter is
+doing in production. Both endpoints are in the skip list so calling them never burns a
+token.
 
-**Derived Queries** (Simple & Readable)
-```java
-Optional<User> findByEmail(String email);
-Page<Product> findByCategory(String category, Pageable pageable);
-```
+| Endpoint | Auth | Returns |
+|---|---|---|
+| `GET /api/v1/rate-limit/status` | any (anon = IP-keyed) | the caller's own bucket: `key`, `keyType`, `limit`, `available`, `resetInSeconds` — no token consumed |
+| `GET /api/v1/admin/rate-limit/buckets?page=0&size=50` | `ADMIN` | paginated list of all cached buckets, sorted by `available` ASC (most-exhausted first) |
 
-**JPQL Queries** (Portable & Type-Safe)
-```java
-@Query("SELECT u FROM User u WHERE u.isActive = true")
-Page<User> findActiveUsers(Pageable pageable);
-```
+Metrics exposed at `/api/v1/actuator/prometheus`:
 
-**Native SQL** (Complex Aggregations)
-```java
-@Query(value = "SELECT * FROM ORDERS WHERE TOTAL_AMOUNT > :amount", 
-       nativeQuery = true)
-Page<Order> findHighValueOrders(Double amount, Pageable pageable);
-```
+| Metric | Type | Tags | Meaning |
+|---|---|---|---|
+| `rate_limit_cache_size` | gauge | (none) | Live size of the Caffeine bucket cache (`buckets.estimatedSize()`) |
+| `rate_limit_requests_total` | counter | `key_type={user,ip}`, `outcome={allowed,rejected,skipped}`, `endpoint={<pathPattern>,default}` | One increment per filter invocation |
+| `rate_limit_rejections_total` | counter | `key_type={user,ip}`, `endpoint={<pathPattern>,default}` | Only incremented on 429; separate from the `requests_total` counter for cleaner alerting rules |
 
-### 4. Validation
-
-**Standard Bean Validation**
-- `@NotNull`, `@NotBlank`, `@Email`
-- `@Positive`, `@Size`, `@Pattern`
-
-**Custom Validators** (Examples in code)
-- Email uniqueness
-- Password strength
-- Phone number format
-
-### 5. Logging with MDC Correlation IDs
-
-```
-2026-05-09 10:30:45 [UUID-12345] INFO UserService - Creating user with email: john@example.com
-2026-05-09 10:30:46 [UUID-12345] DEBUG OrderService - Order created: ORD-20260509-XYZ12
-```
-
-- Request correlation ID generated by `RequestInterceptor`
-- Set in MDC for automatic inclusion in all logs
-- Returned in response header for client tracking
-
-### 6. Transaction Management
-
-All data modifications are transactional:
-```java
-@Service
-@Transactional  // All methods transactional
-public class UserService {
-    @Transactional(readOnly = true)  // Override for queries
-    public UserDTO getUserById(Long id) { ... }
-}
-```
-
-### 7. HATEOAS Support
-
-Selected endpoints include navigation links:
-```json
-{
-  "data": {
-    "id": 1,
-    "name": "John Doe"
-  },
-  "_links": {
-    "self": {"href": "/users/1"},
-    "all-users": {"href": "/users"},
-    "user-orders": {"href": "/orders/user/1"}
-  }
-}
-```
-
-### 8. MapStruct DTO Mapping
-
-Type-safe, compile-time code generation:
-```java
-@Mapper(componentModel = "spring", nullValuePropertyMappingStrategy = IGNORE)
-public interface UserMapper {
-    UserDTO toDTO(User user);
-    User toEntity(CreateUserRequest request);
-    void updateEntityFromRequest(UpdateUserRequest request, @MappingTarget User user);
-}
-```
-
-### 9. Spring AOP Cross-Cutting Concerns
-
-**Service Layer Logging**
-- Method entry/exit logging
-- Automatic execution time tracking
-- Exception logging with stack traces
-
-```
-LoggingAspect:
-  - @Before: Log service method invocation
-  - @Around: Track execution time
-  - @AfterThrowing: Log exceptions
-```
-
-## 🏛️ Architectural Decisions
-
-### SOLID Principles Implementation
-
-**Single Responsibility Principle (SRP)**
-- Each class has one reason to change
-- Controllers: HTTP handling
-- Services: Business logic
-- Repositories: Data access
-
-**Open/Closed Principle (OCP)**
-- Base exception class for extension
-- Service layer for business logic extension
-- Mapper interfaces for customization
-
-**Liskov Substitution Principle (LSP)**
-- Exception hierarchy allows polymorphic handling
-- All exceptions extend `BaseException`
-
-**Interface Segregation Principle (ISP)**
-- Minimal repository interfaces
-- Only required methods exposed
-- Client doesn't depend on unneeded methods
-
-**Dependency Inversion Principle (DIP)**
-- Constructor injection (depends on abstractions)
-- Spring manages dependencies
-- Services depend on Repository interfaces, not implementations
-
-### Entity Design
-
-**Why separate User, Product, Order, OrderItem?**
-- **User**: Customer account management
-- **Product**: Catalog management
-- **Order**: Order lifecycle
-- **OrderItem**: Line items with historical pricing
-
-**OrderItem Importance**
-- Stores product price snapshot (price at time of order)
-- Prevents calculation errors if product price changes
-- Maintains accurate historical data
-
-### DTO vs Entity
-
-**Why DTOs?**
-- API contracts independent from entities
-- Hide internal structure (security)
-- Allow independent evolution of entities and API
-- Prevent lazy loading issues within REST layer
-
-### Lazy vs Eager Loading
-
-**Default: LAZY**
-- Reduces initial query time
-- Prevents loading unnecessary data
-- Risk: N+1 problem if not handled
-
-**Solution**
-- Use JOIN FETCH in repository queries
-- Use @EntityGraph for declarative loading
-
-### Transaction Boundaries
-
-**Why at Service Layer?**
-- Business logic consistency
-- Multiple repository calls as atomic unit
-- Automatic rollback on exception
-
-**Example**
-```java
-// If any step fails, entire order creation rolled back
-@Transactional
-public OrderDTO createOrder(CreateOrderRequest request) {
-    // 1. Validate user
-    // 2. Validate products
-    // 3. Reduce stock
-    // 4. Create order
-    // Either all succeed or all rollback
-}
-```
-
-### Exception Handling Strategy
-
-**Custom Exception Hierarchy**
-```
-BaseException
-├── ResourceNotFoundException (404)
-├── BusinessLogicException (400)
-├── ValidationException (400)
-└── DatabaseException (500)
-```
-
-**Global Exception Handler**
-- Standardized error responses
-- Proper HTTP status codes
-- Security: Don't leak internal details
-
-### Interceptor vs AOP
-
-**Interceptor (RequestInterceptor)**
-- HTTP-level concerns
-- Request/response headers
-- Correlation ID generation
-- Execution timing
-
-**AOP (LoggingAspect)**
-- Method-level concerns
-- Service layer monitoring
-- Business logic cross-cutting
-- Exception handling
-
-## 📊 Coding Standards
-
-### Naming Conventions
-
-**Classes**
-- Services: `*Service` (UserService)
-- Controllers: `*Controller` (UserController)
-- Repositories: `*Repository` (UserRepository)
-- Mappers: `*Mapper` (UserMapper)
-- Aspects: `*Aspect` (LoggingAspect)
-- Exceptions: `*Exception` (ResourceNotFoundException)
-
-**Methods**
-- Getters: `get*()` or property name
-- Setters: `set*()`
-- Checkers: `is*()` or `has*()`
-- Mappers: `to*()` or `from*()`
-
-**Constants**
-- All uppercase with underscores: `MAX_POOL_SIZE`, `ORDER_PENDING`
-
-### Comments
-
-**Public Classes & Methods**
-- JavaDoc comments with parameter/return descriptions
-- Explain "why" not "what"
-
-**Complex Business Logic**
-- Inline comments explain decision
-- Reference business rules
-
-**Avoid**
-- Stating obvious (`// increment i`)
-- Outdated comments
-- Commented-out code
-
-### Code Organization
-
-**Method Order in Class**
-1. Constants
-2. Fields
-3. Constructor(s)
-4. Public methods
-5. Protected methods
-6. Private methods
-7. Inner classes
-
-**Line Length**
-- Max 120 characters
-- Long method calls: break into multiple lines
-
-## 🧪 Testing Strategy
-
-### Test File Locations
-```
-src/test/java/com/apidesign/
-├── service/
-│   ├── UserServiceTest.java
-│   ├── ProductServiceTest.java
-│   └── OrderServiceTest.java
-├── repository/
-│   └── OrderRepositoryTest.java
-└── controller/
-    ├── UserControllerTest.java
-    └── OrderControllerTest.java
-```
-
-### Testing Approach
-
-**Unit Tests** (Test business logic)
-- Service layer tests with mocks
-- Repository tests with @DataJpaTest
-
-**Integration Tests** (Test full flow)
-- @SpringBootTest with TestContainers
-- Test multiple layers together
-
-**Test Example**
-```java
-@ExtendWith(MockitoExtension.class)
-class UserServiceTest {
-    @Mock
-    private UserRepository userRepository;
-    
-    @InjectMocks
-    private UserService userService;
-    
-    @Test
-    void testCreateUserSuccess() {
-        // Arrange
-        CreateUserRequest request = CreateUserRequest.builder()
-            .firstName("John")
-            .lastName("Doe")
-            .email("john@example.com")
-            .phoneNumber("1234567890")
-            .build();
-            
-        User expectedUser = User.builder()
-            .id(1L)
-            .firstName("John")
-            .lastName("Doe")
-            .email("john@example.com")
-            .isActive(true)
-            .build();
-        
-        when(userRepository.save(any(User.class))).thenReturn(expectedUser);
-        
-        // Act
-        UserDTO result = userService.createUser(request);
-        
-        // Assert
-        assertNotNull(result);
-        assertEquals("john@example.com", result.getEmail());
-        verify(userRepository, times(1)).save(any(User.class));
-    }
-}
-```
-
-## 📋 API Examples
-
-### 1. Create User
-
-**Request:**
-```bash
-curl -X POST http://localhost:8080/api/v1/users \
-  -H "Content-Type: application/json" \
-  -d '{
-    "firstName": "John",
-    "lastName": "Doe",
-    "email": "john@example.com",
-    "phoneNumber": "+1-234-567-8900",
-    "address": "123 Main St",
-    "city": "Springfield",
-    "state": "IL",
-    "zipcode": "62701"
-  }'
-```
-
-**Response (201 Created):**
-```json
-{
-  "timestamp": "2026-05-09T10:30:00",
-  "status": 201,
-  "message": "User created successfully",
-  "data": {
-    "id": 1,
-    "firstName": "John",
-    "lastName": "Doe",
-    "email": "john@example.com",
-    "phoneNumber": "+1-234-567-8900",
-    "address": "123 Main St",
-    "city": "Springfield",
-    "state": "IL",
-    "zipcode": "62701",
-    "isActive": true
-  }
-}
-```
-
-### 2. Create Product with Custom Validators
-
-**Request:**
-```bash
-curl -X POST http://localhost:8080/api/v1/products \
-  -H "Content-Type: application/json" \
-  -d '{
-    "sku": "PROD-2024-001",
-    "name": "Laptop Computer",
-    "description": "High-performance laptop",
-    "price": 1299.99,
-    "stockQuantity": 50,
-    "minStockLevel": 10,
-    "category": "Electronics",
-    "supplier": "Tech Corp"
-  }'
-```
-
-**Response (201 Created):**
-```json
-{
-  "timestamp": "2026-05-09T10:30:00",
-  "status": 201,
-  "message": "Product created successfully",
-  "data": {
-    "id": 1,
-    "sku": "PROD-2024-001",
-    "name": "Laptop Computer",
-    "description": "High-performance laptop",
-    "price": 1299.99,
-    "stockQuantity": 50,
-    "minStockLevel": 10,
-    "category": "Electronics",
-    "supplier": "Tech Corp",
-    "isAvailable": true
-  }
-}
-```
-
-### 3. Validation Error Example
-
-**Request (Invalid SKU - lowercase):**
-```bash
-curl -X POST http://localhost:8080/api/v1/products \
-  -H "Content-Type: application/json" \
-  -d '{
-    "sku": "prod-2024-001",
-    "name": "Test Product",
-    "price": 99.99,
-    "stockQuantity": 10
-  }'
-```
-
-**Response (400 Bad Request):**
-```json
-{
-  "timestamp": "2026-05-09T10:30:00",
-  "status": 400,
-  "message": "Validation failed",
-  "path": "/api/v1/products",
-  "errors": [
-    {
-      "field": "sku",
-      "message": "SKU must be alphanumeric with hyphens, 3-20 characters",
-      "rejectedValue": "prod-2024-001"
-    }
-  ]
-}
-```
-
-### 4. Create Order with Multiple Items
-
-**Request:**
-```bash
-curl -X POST http://localhost:8080/api/v1/orders \
-  -H "Content-Type: application/json" \
-  -d '{
-    "userId": 1,
-    "orderItems": [
-      {
-        "productId": 1,
-        "quantity": 2,
-        "notes": "Premium model"
-      },
-      {
-        "productId": 5,
-        "quantity": 1,
-        "notes": "Extended warranty"
-      }
-    ],
-    "shippingAddress": "456 Oak Ave, Chicago, IL 60601",
-    "notes": "Priority shipping please"
-  }'
-```
-
-**Response (201 Created):**
-```json
-{
-  "timestamp": "2026-05-09T10:30:00",
-  "status": 201,
-  "message": "Order created successfully",
-  "data": {
-    "id": 1,
-    "orderNumber": "ORD-20260509-ABC123",
-    "userId": 1,
-    "orderStatus": "PENDING",
-    "totalAmount": 2699.97,
-    "shippingAddress": "456 Oak Ave, Chicago, IL 60601",
-    "notes": "Priority shipping please",
-    "createdAt": "2026-05-09T10:30:00",
-    "updatedAt": "2026-05-09T10:30:00",
-    "orderItems": [
-      {
-        "id": 1,
-        "productId": 1,
-        "productName": "Laptop Computer",
-        "quantity": 2,
-        "unitPrice": 1299.99,
-        "totalPrice": 2599.98
-      },
-      {
-        "id": 2,
-        "productId": 5,
-        "productName": "Extended Warranty",
-        "quantity": 1,
-        "unitPrice": 99.99,
-        "totalPrice": 99.99
-      }
-    ]
-  }
-}
-```
-
-### 5. List Products with Pagination
-
-**Request:**
-```bash
-curl "http://localhost:8080/api/v1/products?page=0&size=10&sort=name,asc"
-```
-
-**Response (200 OK):**
-```json
-{
-  "timestamp": "2026-05-09T10:30:00",
-  "status": 200,
-  "message": "Retrieved 10 products",
-  "data": {
-    "content": [
-      {
-        "id": 1,
-        "sku": "PROD-2024-001",
-        "name": "Extended Warranty",
-        "price": 99.99,
-        "stockQuantity": 500,
-        "category": "Services"
-      },
-      {
-        "id": 2,
-        "sku": "PROD-2024-002",
-        "name": "Laptop Computer",
-        "price": 1299.99,
-        "stockQuantity": 48,
-        "category": "Electronics"
-      }
-    ],
-    "currentPage": 0,
-    "pageSize": 10,
-    "totalElements": 25,
-    "totalPages": 3,
-    "hasNext": true,
-    "hasPrevious": false
-  }
-}
-```
-
-### 6. HATEOAS Enabled - Get Single Product
-
-**Request:**
-```bash
-curl "http://localhost:8080/api/v1/products/1"
-```
-
-**Response (200 OK with HATEOAS links):**
-```json
-{
-  "timestamp": "2026-05-09T10:30:00",
-  "status": 200,
-  "message": "Product retrieved successfully",
-  "data": {
-    "id": 1,
-    "sku": "PROD-2024-001",
-    "name": "Laptop Computer",
-    "price": 1299.99,
-    "stockQuantity": 50,
-    "_links": {
-      "self": {
-        "href": "http://localhost:8080/api/v1/products/1"
-      },
-      "all-products": {
-        "href": "http://localhost:8080/api/v1/products"
-      }
-    }
-  }
-}
-```
-
-### 7. Update User
-
-**Request:**
-```bash
-curl -X PUT http://localhost:8080/api/v1/users/1 \
-  -H "Content-Type: application/json" \
-  -d '{
-    "firstName": "Jonathan",
-    "phoneNumber": "+1-234-567-8901"
-  }'
-```
-
-**Response (200 OK):**
-```json
-{
-  "timestamp": "2026-05-09T10:30:00",
-  "status": 200,
-  "message": "User updated successfully",
-  "data": {
-    "id": 1,
-    "firstName": "Jonathan",
-    "lastName": "Doe",
-    "email": "john@example.com",
-    "phoneNumber": "+1-234-567-8901",
-    "isActive": true
-  }
-}
-```
-
-### 8. Error Response - Resource Not Found
-
-**Request:**
-```bash
-curl "http://localhost:8080/api/v1/users/999"
-```
-
-**Response (404 Not Found):**
-```json
-{
-  "timestamp": "2026-05-09T10:30:00",
-  "status": 404,
-  "message": "User not found with ID: 999",
-  "errorCode": "USER-001"
-}
-```
-
-### 9. Correlation ID Tracking in Response Headers
-
-**Request:**
-```bash
-curl -v "http://localhost:8080/api/v1/products/1"
-```
-
-**Response Headers:**
-```
-HTTP/1.1 200 OK
-X-Correlation-ID: 550e8400-e29b-41d4-a716-446655440000
-Content-Type: application/json
-```
-
-This correlation ID can be used in logs to track the entire request flow across services.
-
-
-
-## 🚢 Deployment
-
-### Production Configuration (application-prod.yml)
-
-**Database**
-- Connection string from environment variables
-- SSL connections enabled
-- Larger connection pool
-
-**Logging**
-- WARN level default
-- Log files to `/var/log/order-management-system/`
-- File rotation
-
-**Security**
-- SSL/TLS enabled
-- Sensitive credentials from environment
-
-### Building for Production
+Example calls:
 
 ```bash
-# Build JAR
-mvn clean package -DskipTests -P prod
+# Self-inspection (always reachable; no token even when JWT is on)
+curl http://localhost:8080/api/v1/rate-limit/status
 
-# Run with production profile
-java -jar target/order-management-system-1.0.0.jar \
-  --spring.profiles.active=prod \
-  -Dspring.datasource.url=jdbc:oracle:thin:@prod-db:1521/FREEPDB1 \
-  -Dspring.datasource.username=${DB_USER} \
-  -Dspring.datasource.password=${DB_PASSWORD}
+# Admin debugging — most-exhausted buckets first
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  'http://localhost:8080/api/v1/admin/rate-limit/buckets?page=0&size=50'
 ```
 
-## 📝 Future Improvements
+## Observability
 
-1. **Authentication & Authorization**
-   - JWT token support
-   - Role-based access control (RBAC)
-   - OAuth2 integration
+- Prometheus scrape: `GET /api/v1/actuator/prometheus`
+- Health probes: `/actuator/health/liveness`, `/actuator/health/readiness`
+- Info / loggers / metrics exposed
+- Tracing via Micrometer → OpenTelemetry OTLP. Set `OTEL_EXPORTER_OTLP_ENDPOINT`
+  to your collector (default `http://localhost:4318/v1/traces`).
+- Every request gets an `X-Correlation-Id` (echoed back, generated if missing).
+  MDC variables `correlationId`, `traceId`, `spanId` appear in log lines:
 
-2. **Caching Layer**
-   - Redis for product catalog caching
-   - Spring Cache abstraction
+```
+2026-05-28 11:00:00.000 INFO  [a1b2…] [trace-id/span-id] c.a.x.Y - ...
+```
 
-3. **API Documentation**
-   - Springdoc OpenAPI / Swagger integration
-   - API versioning strategies
+## Data model
 
-4. **Async Processing**
-   - Async order confirmation emails
-   - Background job processing with Spring Task
-   - Message queues (RabbitMQ/Kafka)
+- `users` (id, first_name, last_name, email UNIQUE, password_hash, phone_number, …,
+  is_active, user_type, created_at, updated_at, created_by, updated_by)
+- `user_roles` (user_id, role)
+- `products` (id, version, sku UNIQUE, name, description, price, stock_quantity,
+  min_stock_level, category, is_available, supplier, audit columns)
+- `orders` (id, version, order_number UNIQUE, user_id FK, order_status, total_amount,
+  shipping_address, notes, estimated_delivery, audit columns)
+- `order_items` (id, order_id FK, product_id FK, product_name snapshot,
+  product_sku snapshot, unit_price snapshot, quantity, discount, notes, audit columns)
 
-5. **Monitoring & Metrics**
-   - Micrometer/Prometheus metrics
-   - Spring Boot Actuator endpoints
-   - Distributed tracing (Jaeger/Zipkin)
+Sequences (each `allocationSize=50`): `USER_SEQ`, `PRODUCT_SEQ`, `ORDER_SEQ`,
+`ORDER_ITEM_SEQ`.
 
-6. **Database Migrations**
-   - Flyway/Liquibase for schema versioning
-   - Version-controlled DDL changes
+## Testing
 
-7. **Advanced Security**
-   - Rate limiting
-   - CORS configuration
-   - Request sanitization
+```bash
+mvn test               # unit + slice tests (H2 in-memory)
+mvn verify             # tests + Jacoco coverage report at target/site/jacoco/
+mvn spotless:apply     # format
+```
 
-## 🤝 Contributing
+Repository tests are `@DataJpaTest` and run against H2. Service tests are pure
+Mockito. No Oracle is required for `mvn test`.
 
-Follow the coding standards and architectural patterns described above.
+## Future scope
 
-## 📄 License
+The items below were considered for the fourth pass but deliberately deferred — each
+would have been a significant standalone learning beat in its own right. Grouped into
+the same tiers as the original brief.
 
-Proprietary - All rights reserved
+### Tier 1 — Architectural patterns
 
----
+- **Spring Modulith** — split the monolith into verified modules (orders, products, users)
+  with package-scope enforcement and event-published-between-modules. Teaches modular
+  monolith decomposition and `@ApplicationModuleTest` slice isolation.
+- **Hexagonal restructure** — convert package layout to `domain` / `application` /
+  `infrastructure` / `adapter`. Teaches dependency-inversion at the architecture level
+  (controllers and repositories both become adapters around a domain core).
+- **CQRS / Domain events as aggregates** — separate write models (commands) from read
+  models (queries / projections), persist domain events alongside aggregate writes.
+  Teaches event sourcing fundamentals without going full ES.
 
-**Created**: May 2026  
-**Java Version**: 21  
-**Spring Boot Version**: 3.3.0
+### Tier 2 — Integration patterns
 
+- **@HttpExchange declarative HTTP clients** — Spring 6's typed REST client via
+  interface + annotations (Feign-style, no Feign). Teaches the modern Spring way to
+  consume external APIs.
+- **Outbox pattern + Kafka** — write events to a DB `outbox` table inside the same
+  transaction as the entity, then a poller publishes to Kafka. Teaches reliable
+  at-least-once delivery without distributed transactions. (User noted "no Kafka" but
+  the pattern itself is the lesson; could implement with an in-memory broker.)
+- **gRPC alternative endpoint** — expose the same domain via gRPC alongside REST.
+  Teaches protobuf, generated stubs, streaming RPCs.
+
+### Tier 3 — Querying
+
+- **Querydsl / Specifications** — type-safe dynamic queries. Replace string JPQL in
+  `searchProducts(...)` with Querydsl `BooleanBuilder` or Spring Data `Specification`
+  composition. Teaches building dynamic predicates safely.
+
+### Tier 4 — Native/AI
+
+- **GraalVM native image** — `mvn -Pnative native:compile`. Teaches AOT compilation
+  trade-offs, reflection registration, runtime hints.
+- **Spring AI integration** — wire `ChatClient` against a local LLM (Ollama). Teaches
+  the Spring AI abstraction and prompt-as-a-template patterns.
+
+### Tier 5 — Observability + quality
+
+- **Structured JSON logging (logstash-logback-encoder)** — switch the console pattern
+  to JSON so log aggregators (Loki, ELK, Cloud Logging) can parse fields like
+  `correlationId` natively instead of via regex. Teaches structured logging.
+- **Local observability stack via docker-compose** — Prometheus + Grafana + Loki +
+  Tempo containers reading from the existing actuator endpoints. Teaches end-to-end
+  observability wiring.
+- **Spring REST Docs** — generate API docs from passing tests rather than annotations.
+  Teaches doc-as-test workflow.
+- **Mutation testing (PIT)** — run `mvn org.pitest:pitest-maven:mutationCoverage` to
+  see which mutations your tests fail to detect. Teaches the gap between coverage and
+  effectiveness.
+- **OWASP Dependency-Check** — `mvn org.owasp:dependency-check-maven:check` against
+  the NVD. Teaches supply-chain security.
+
+### Tier 6 — Delivery
+
+- **GitHub Actions CI** — workflow for `mvn verify`, Spotless check, image build.
+  Teaches the GitHub-native CI primitives.
+- **Dockerfile + Buildpacks** — `mvn spring-boot:build-image` for OCI image production.
+  Teaches the modern non-Dockerfile container build path.
+- **Helm chart** — package the app for Kubernetes deployment. Teaches templating and
+  values files. (User noted "no K8s" — listed for completeness.)
+
+### Other deferrals from the fourth pass scope
+
+- **WebSocket JWT-on-handshake** — production deployments authenticate the STOMP
+  CONNECT frame, not just the HTTP upgrade. Out of scope here; the bridge is in
+  `event/listener/WebSocketOrderBridge.java` and broadcasts to anonymous topics.
+- **Refresh-token blacklist on logout** — the rotation flow handles theft detection,
+  but explicit logout requires marking the family revoked on demand. Trivially adds
+  to `AuthService` as `revoke(String refreshToken)`.
+
+## Troubleshooting
+
+- **App won't start, complains about `DB_PASSWORD`** — you're on dev/prod without
+  setting the env var. Either set it or switch to the `local` profile.
+- **HTTP 401 on protected endpoints** — token missing/expired. Re-login and pass
+  `Authorization: Bearer <token>`.
+- **HTTP 409 on `POST /orders`** — concurrent orders against the same product
+  exhausted stock between attempts. Retry; the service already retries 3 times on
+  `DataIntegrityViolationException`. Persistent 409 means actual integrity issue.
+- **HTTP 429 with `Retry-After`** — rate-limited. Either back off or raise
+  `app.rate-limit.*` in `application.yml`.
+- **`OptimisticLockingFailureException` → 409** — another request modified the
+  same row. Refetch and retry with the latest version.

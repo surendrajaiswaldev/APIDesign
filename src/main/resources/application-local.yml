@@ -4,24 +4,25 @@ spring:
       on-profile: local
 
   datasource:
-    url: jdbc:oracle:thin:@localhost:1521/FREEPDB1
-    username: system
-    password: password
+    url: ${DB_URL:jdbc:oracle:thin:@localhost:1521/FREEPDB1}
+    username: ${DB_USERNAME:system}
+    password: ${DB_PASSWORD:password}
 
   jpa:
     hibernate:
-      # IMPORTANT: Change to 'validate' when schema is stable to prevent data loss
-      # Current 'create-drop' recreates schema on each startup (clean for initial local dev)
-      # Once data persistence is needed, switch to 'update' or 'validate' + Flyway migrations
-      ddl-auto: create-drop
+      # Flyway owns the schema. Hibernate validates the entity model against it on boot,
+      # so any drift (forgotten column, wrong type) fails fast instead of silently
+      # rewriting tables. If you switched from ddl-auto for the first time, drop the
+      # existing tables once (see README) so V1 can run cleanly.
+      ddl-auto: validate
       format_sql: true
-    show-sql: true # Show SQL in console for debugging
+    show-sql: true
 
 springdoc:
   api-docs:
-    path: /api/v1/api-docs
+    path: /api-docs
   swagger-ui:
-    path: /api/v1/swagger-ui.html
+    path: /swagger-ui
     enabled: true
     operations-sorter: method
     tags-sorter: alpha
@@ -31,6 +32,21 @@ logging:
     root: INFO
     com.apidesign: DEBUG
     org.hibernate.SQL: DEBUG
+    # Only enabled locally: prints actual JDBC bind parameter values.
     org.hibernate.type.descriptor.sql.BasicBinder: TRACE
     org.springframework.web: DEBUG
+    org.springframework.security: DEBUG
 
+# Local-profile feature flags: easier developer ergonomics.
+# Auth is OFF (all endpoints public) and bean validation is OFF (@Valid is a no-op).
+# Both flags default to true elsewhere; flip if you want to test the production paths.
+app:
+  security:
+    jwt:
+      enabled: false
+  validation:
+    enabled: false
+  audit:
+    exceptions:
+      # Local devs want DB-logged exceptions while iterating.
+      enabled: true

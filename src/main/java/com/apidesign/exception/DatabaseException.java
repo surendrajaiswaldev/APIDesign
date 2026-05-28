@@ -3,11 +3,8 @@ package com.apidesign.exception;
 import com.apidesign.constants.ErrorCodes;
 import org.springframework.http.HttpStatus;
 
-/**
- * Exception thrown when database operations fail.
- * Corresponds to HTTP 500 Internal Server Error status.
- */
-public class DatabaseException extends BaseException {
+public final class DatabaseException extends BaseException {
+
     public DatabaseException(String message) {
         super(message, ErrorCodes.DATABASE_ERROR, HttpStatus.INTERNAL_SERVER_ERROR.value());
     }
@@ -20,4 +17,3 @@ public class DatabaseException extends BaseException {
         super(message, errorCode, HttpStatus.INTERNAL_SERVER_ERROR.value(), cause);
     }
 }
-
