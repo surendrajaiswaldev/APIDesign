@@ -84,7 +84,7 @@ Spring will fail fast at startup if they're missing.
 
 ### Profiles
 
-- `local` — committed defaults. `ddl-auto: create-drop`. Verbose SQL logging.
+- `local` — committed defaults. Flyway owns schema; `ddl-auto: validate`. Verbose SQL logging.
 - `dev`   — env vars required. `ddl-auto: validate`.
 - `prod`  — env vars required. `ddl-auto: validate`. SSL on. Swagger UI off.
 
@@ -211,27 +211,46 @@ flex it with the local curl command.
 ### One-time DB cleanup when switching from `ddl-auto` to Flyway
 
 If you previously ran the app under `ddl-auto: create-drop` or `update`, the schema
-exists but Flyway has never logged it. Pick one:
-
-- **Easiest (local only)**: drop the application objects and let Flyway run from V1.
+exists but Flyway has never logged it. The base config sets
+`spring.flyway.baseline-on-migrate: false` deliberately — Flyway will refuse to run
+against a non-empty schema rather than silently skip V1 and leave Hibernate validate
+chasing missing columns. Drop everything and let Flyway apply V1..V4 cleanly:
 
 ```sql
 -- Connect to your local Oracle as the application user and run:
-DROP TABLE ORDER_ITEMS CASCADE CONSTRAINTS;
-DROP TABLE ORDERS CASCADE CONSTRAINTS;
-DROP TABLE USER_ROLES CASCADE CONSTRAINTS;
-DROP TABLE PRODUCTS CASCADE CONSTRAINTS;
-DROP TABLE "USERS" CASCADE CONSTRAINTS;
+-- Order matters: drop children before parents. CASCADE CONSTRAINTS handles the rest.
+DROP TABLE ORDER_ITEMS         CASCADE CONSTRAINTS;
+DROP TABLE ORDERS              CASCADE CONSTRAINTS;
+DROP TABLE USER_ROLES          CASCADE CONSTRAINTS;
+DROP TABLE REFRESH_TOKENS      CASCADE CONSTRAINTS;
+DROP TABLE PRODUCTS            CASCADE CONSTRAINTS;
+DROP TABLE "USERS"             CASCADE CONSTRAINTS;
 DROP TABLE APPLICATION_EXCEPTION CASCADE CONSTRAINTS;
+DROP TABLE SHEDLOCK            CASCADE CONSTRAINTS;
+-- Flyway history MUST also go — Flyway treats a populated history table as a
+-- managed schema and will not re-run prior versions, even if the tables are gone.
+DROP TABLE FLYWAY_SCHEMA_HISTORY CASCADE CONSTRAINTS;
+
 DROP SEQUENCE USER_SEQ;
 DROP SEQUENCE PRODUCT_SEQ;
 DROP SEQUENCE ORDER_SEQ;
 DROP SEQUENCE ORDER_ITEM_SEQ;
 DROP SEQUENCE APP_EXCEPTION_SEQ;
+DROP SEQUENCE REFRESH_TOKEN_SEQ;
 -- Then start the app — Flyway will apply V1..V4 from scratch.
 ```
 
-- **Adopt existing schema**: keep tables as-is and let Flyway baseline. `spring.flyway.baseline-on-migrate: true` is already set in `application.yml`, so the first run creates a `flyway_schema_history` row at the highest applied version and only applies *newer* scripts. Use this if your local DB already contains data you don't want to drop.
+Each `DROP` is independent — if an object doesn't exist (because a previous attempt
+already dropped it), Oracle returns `ORA-00942: table or view does not exist` /
+`ORA-02289: sequence does not exist`; both are safe to ignore. Run each statement
+individually, or wrap them in a PL/SQL block that swallows those error codes.
+
+**Adopt an existing schema** (only if you cannot drop data): set
+`spring.flyway.baseline-on-migrate=true` *once* via an env var or CLI flag, point
+`spring.flyway.baseline-version` at the migration that matches your current state
+(e.g. `4` if all four V1..V4 are reflected in the tables), boot, then remove the
+override. Do not leave `baseline-on-migrate: true` in committed config — it hides
+schema drift.
 
 ## Feature flags
 
@@ -483,6 +502,13 @@ the same tiers as the original brief.
 
 ## Troubleshooting
 
+- **App won't start: Flyway validation error or Hibernate `Schema-validation: missing
+  table/column`** — usually the schema is in a half-migrated state. Either previous
+  `ddl-auto` runs left tables that don't match V1..V4, or a previous boot dropped
+  app tables but left `FLYWAY_SCHEMA_HISTORY` behind. The boot path is "Flyway runs
+  → Hibernate validates"; both must agree. Run the cleanup SQL in
+  [One-time DB cleanup](#one-time-db-cleanup-when-switching-from-ddl-auto-to-flyway)
+  (specifically including `FLYWAY_SCHEMA_HISTORY`) and restart.
 - **App won't start, complains about `DB_PASSWORD`** — you're on dev/prod without
   setting the env var. Either set it or switch to the `local` profile.
 - **HTTP 401 on protected endpoints** — token missing/expired. Re-login and pass

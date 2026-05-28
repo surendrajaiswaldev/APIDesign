@@ -49,7 +49,8 @@ class UserIntegrationTest {
         registry.add("spring.jpa.database-platform", () -> "org.hibernate.dialect.OracleDialect");
         // We want the real production-style path: Flyway runs, Hibernate validates.
         registry.add("spring.flyway.enabled", () -> "true");
-        registry.add("spring.flyway.baseline-on-migrate", () -> "true");
+        // Fresh container each time → baseline-on-migrate must be false so V1..V4 actually run.
+        registry.add("spring.flyway.baseline-on-migrate", () -> "false");
         registry.add("spring.jpa.hibernate.ddl-auto", () -> "validate");
         // Turn enforcement on so the tests exercise the production code path.
         registry.add("app.security.jwt.enabled", () -> "true");

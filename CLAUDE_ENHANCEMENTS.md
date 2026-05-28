@@ -487,3 +487,37 @@ than an exotic alternative. Compiles clean under `mvn -q -DskipTests compile`.
 - **`AuthService` constructor signature.** Added `RefreshTokenRepository` as the 5th argument. Same caveat.
 - **`TokenResponse` record shape.** Now has 4 components instead of 3. Jackson deserialization from older payloads still works (missing `refreshToken` → null), but tests asserting `equals` on the record will need updating.
 - **`SecurityProperties.Jwt` record gained `refreshExpiryDays`.** Default 7. Tests that construct the record manually need the extra param.
+
+# Fifth pass — boot-path fix
+
+## Summary
+
+The fourth pass shipped Flyway + `ddl-auto: validate` but left
+`spring.flyway.baseline-on-migrate: true` in the base config. On any host whose Oracle
+schema retained even a single object from a previous `ddl-auto` run, Flyway silently
+baselined at V1 and skipped V1..V4 — leaving the entity model without the columns it
+expected and Hibernate `validate` failing on startup. The README's one-time cleanup
+block also missed `REFRESH_TOKENS`, `SHEDLOCK`, `REFRESH_TOKEN_SEQ`, and
+`FLYWAY_SCHEMA_HISTORY`, so following it produced exactly that half-migrated state.
+This pass flips the default to fail-loudly and completes the cleanup.
+
+## Files modified
+
+| File | One-line reason |
+|---|---|
+| `src/main/resources/application.yml` | `spring.flyway.baseline-on-migrate: false`. With it true, a non-empty target schema causes Flyway to silently skip V1; validate then fails on missing columns and the app can't start. False makes Flyway refuse to run against an unbaselined non-empty schema instead, surfacing the real problem in the log. |
+| `src/test/java/com/apidesign/integration/UserIntegrationTest.java` | Mirror the new default (`baseline-on-migrate=false`) so the Testcontainers Oracle picks up V1..V4 cleanly on every fresh container. |
+| `README.md` | Cleanup SQL now includes `REFRESH_TOKENS`, `SHEDLOCK`, `FLYWAY_SCHEMA_HISTORY`, `REFRESH_TOKEN_SEQ`. Fixed an outdated claim that the `local` profile uses `ddl-auto: create-drop` (it uses `validate`). New troubleshooting entry pointing schema-validation failures at the cleanup script. |
+
+## Rationale
+
+- **Default false** is the canonical Spring Boot 3 / Flyway 10 stance: if the target
+  schema is non-empty and there is no `flyway_schema_history`, that is an unsafe state
+  and the operator must explicitly say "treat this as the baseline" with
+  `baseline-on-migrate=true` plus an explicit `baseline-version`. The previous default
+  hid the most common boot failure during a Flyway adoption (drift between entity and
+  legacy DDL).
+- **Drop list must include FLYWAY_SCHEMA_HISTORY.** Even after dropping every other
+  app object, leaving the history table behind makes Flyway think the migrations are
+  applied — V1..V4 are skipped and validate fails on missing tables. This was the most
+  common operator-side trigger of the reported boot failure.

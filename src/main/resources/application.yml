@@ -8,9 +8,13 @@ spring:
 
   flyway:
     enabled: true
-    # Set true so an existing schema (created previously by ddl-auto) can be adopted
-    # without re-applying V1. New databases run V1..V4 from a clean baseline.
-    baseline-on-migrate: true
+    # IMPORTANT: keep this FALSE.
+    # When true and the target schema is non-empty (e.g. previously created by ddl-auto)
+    # Flyway silently baselines at version 1 and SKIPS V1, leaving the entity model
+    # without the columns it needs. Hibernate `validate` then fails on missing columns
+    # and the app won't start. Operators migrating an existing DB should run the cleanup
+    # script in the README first, then bring the app up against an empty schema.
+    baseline-on-migrate: false
     locations: classpath:db/migration
 
   jpa:
