@@ -8,13 +8,16 @@ spring:
 
   flyway:
     enabled: true
-    # IMPORTANT: keep this FALSE.
-    # When true and the target schema is non-empty (e.g. previously created by ddl-auto)
-    # Flyway silently baselines at version 1 and SKIPS V1, leaving the entity model
-    # without the columns it needs. Hibernate `validate` then fails on missing columns
-    # and the app won't start. Operators migrating an existing DB should run the cleanup
-    # script in the README first, then bring the app up against an empty schema.
-    baseline-on-migrate: false
+    # The migrations are idempotent (each CREATE wrapped in PL/SQL that swallows
+    # ORA-00955 "name already used"), so baseline-on-migrate=true is safe: even
+    # if Flyway baselines an existing schema and "skips" V1, the next deployment
+    # of a new V_n migration will still find the tables it needs because V1's
+    # CREATE statements would silently no-op anyway. Belt-and-suspenders.
+    baseline-on-migrate: true
+    # Dedicated schema for this service. Flyway creates the schema if missing
+    # (provided the connecting user has CREATE USER / CREATE SCHEMA privileges)
+    # and sets CURRENT_SCHEMA for the session before running migrations.
+    schemas: apiservice
     locations: classpath:db/migration
 
   jpa:
@@ -27,6 +30,9 @@ spring:
     properties:
       hibernate:
         dialect: org.hibernate.dialect.OracleDialect
+        # Match Flyway's schemas setting so Hibernate validates against the
+        # same place Flyway created tables in.
+        default_schema: apiservice
         jdbc:
           batch_size: 20
           fetch_size: 50
