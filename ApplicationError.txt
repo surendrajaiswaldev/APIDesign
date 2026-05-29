@@ -1,1 +1,49 @@
 can you create a dummy data script to insert records in to the tables for practice API.
+
+2026-05-29 09:36:46.437 DEBUG [f5f295f0-166e-467c-8540-b48472c20dcb] [c8fbc669529ae666c4481018290bda3e/34a03a3791d187cf] o.s.w.s.m.m.a.HttpEntityMethodProcessor - Writing [ApiResponse[timestamp=2026-05-29T09:36:46.408423800, status=201, message=User registered, data=UserD (truncated)...]
+2026-05-29 09:36:46.441 INFO  [f5f295f0-166e-467c-8540-b48472c20dcb] [c8fbc669529ae666c4481018290bda3e/34a03a3791d187cf] c.a.interceptor.RequestInterceptor - REQ POST /api/v1/auth/register -> 201 in 1425ms
+2026-05-29 09:36:46.441 DEBUG [f5f295f0-166e-467c-8540-b48472c20dcb] [c8fbc669529ae666c4481018290bda3e/34a03a3791d187cf] o.s.web.servlet.DispatcherServlet - Completed 201 CREATED
+2026-05-29 09:36:46.441 INFO  [f5f295f0-166e-467c-8540-b48472c20dcb] [/] c.a.o.CorrelationIdFilter - POST /api/v1/auth/register -> 201 in 1440ms
+2026-05-29 09:36:50.870 ERROR [] [/] i.o.e.internal.http.HttpExporter - Failed to export spans. The request could not be executed. Full error message: Failed to connect to localhost/[0:0:0:0:0:0:0:1]:4318
+java.net.ConnectException: Failed to connect to localhost/[0:0:0:0:0:0:0:1]:4318
+        at okhttp3.internal.connection.RealConnection.connectSocket(RealConnection.kt:297)
+        at okhttp3.internal.connection.RealConnection.connect(RealConnection.kt:207)
+        at okhttp3.internal.connection.ExchangeFinder.findConnection(ExchangeFinder.kt:226)
+        at okhttp3.internal.connection.ExchangeFinder.findHealthyConnection(ExchangeFinder.kt:106)
+        at okhttp3.internal.connection.ExchangeFinder.find(ExchangeFinder.kt:74)
+        at okhttp3.internal.connection.RealCall.initExchange$okhttp(RealCall.kt:255)
+        at okhttp3.internal.connection.ConnectInterceptor.intercept(ConnectInterceptor.kt:32)
+        at okhttp3.internal.http.RealInterceptorChain.proceed(RealInterceptorChain.kt:109)
+        at okhttp3.internal.cache.CacheInterceptor.intercept(CacheInterceptor.kt:95)
+        at okhttp3.internal.http.RealInterceptorChain.proceed(RealInterceptorChain.kt:109)
+        at okhttp3.internal.http.BridgeInterceptor.intercept(BridgeInterceptor.kt:83)
+        at okhttp3.internal.http.RealInterceptorChain.proceed(RealInterceptorChain.kt:109)
+        at okhttp3.internal.http.RetryAndFollowUpInterceptor.intercept(RetryAndFollowUpInterceptor.kt:76)
+        at okhttp3.internal.http.RealInterceptorChain.proceed(RealInterceptorChain.kt:109)
+        at okhttp3.internal.connection.RealCall.getResponseWithInterceptorChain$okhttp(RealCall.kt:201)
+        at okhttp3.internal.connection.RealCall$AsyncCall.run(RealCall.kt:517)
+        at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1144)
+        at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:642)
+        at java.base/java.lang.Thread.run(Thread.java:1583)
+        Suppressed: java.net.ConnectException: Failed to connect to localhost/127.0.0.1:4318
+                ... 19 common frames omitted
+        Caused by: java.net.ConnectException: Connection refused: getsockopt
+                at java.base/sun.nio.ch.Net.pollConnect(Native Method)
+                at java.base/sun.nio.ch.Net.pollConnectNow(Net.java:682)
+                at java.base/sun.nio.ch.NioSocketImpl.timedFinishConnect(NioSocketImpl.java:542)
+                at java.base/sun.nio.ch.NioSocketImpl.connect(NioSocketImpl.java:592)
+                at java.base/java.net.SocksSocketImpl.connect(SocksSocketImpl.java:327)
+                at java.base/java.net.Socket.connect(Socket.java:751)
+                at okhttp3.internal.platform.Platform.connectSocket(Platform.kt:128)
+                at okhttp3.internal.connection.RealConnection.connectSocket(RealConnection.kt:295)
+                ... 18 common frames omitted
+Caused by: java.net.ConnectException: Connection refused: getsockopt
+        at java.base/sun.nio.ch.Net.pollConnect(Native Method)
+        at java.base/sun.nio.ch.Net.pollConnectNow(Net.java:682)
+        at java.base/sun.nio.ch.NioSocketImpl.timedFinishConnect(NioSocketImpl.java:542)
+        at java.base/sun.nio.ch.NioSocketImpl.connect(NioSocketImpl.java:592)
+        at java.base/java.net.SocksSocketImpl.connect(SocksSocketImpl.java:327)
+        at java.base/java.net.Socket.connect(Socket.java:751)
+        at okhttp3.internal.platform.Platform.connectSocket(Platform.kt:128)
+        at okhttp3.internal.connection.RealConnection.connectSocket(RealConnection.kt:295)
+        ... 18 common frames omitted
