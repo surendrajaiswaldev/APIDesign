@@ -6,6 +6,7 @@ import java.util.Arrays;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -68,7 +69,10 @@ public class SecurityConfig {
         HttpSecurity http,
         JwtAuthenticationFilter jwtAuthFilter,
         RateLimitFilter rateLimitFilter,
-        CorsConfigurationSource corsSource)
+        // Disambiguate: in Spring Boot 3.x, `mvcHandlerMappingIntrospector` also implements
+        // CorsConfigurationSource. Without this @Qualifier, autowire finds two beans and
+        // bails with "expected single matching bean but found 2".
+        @Qualifier("corsConfigurationSource") CorsConfigurationSource corsSource)
         throws Exception {
 
         http
