@@ -7,7 +7,7 @@ spring:
       enabled: true
 
   flyway:
-    enabled: true
+    enabled: false
     # The migrations are idempotent (each CREATE wrapped in PL/SQL that swallows
     # ORA-00955 "name already used"), so baseline-on-migrate=true is safe: even
     # if Flyway baselines an existing schema and "skips" V1, the next deployment
