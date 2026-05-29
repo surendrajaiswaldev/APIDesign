@@ -151,6 +151,17 @@
             <artifactId>spring-boot-starter-websocket</artifactId>
         </dependency>
 
+        <!--
+             Spring HATEOAS (Apache 2). Re-added for the canonical HAL approach: GET
+             endpoints return EntityModel<DTO> / PagedModel<EntityModel<DTO>> directly,
+             so responses are application/hal+json with _links at the top level — not
+             wrapped inside an ApiResponse envelope.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-hateoas</artifactId>
+        </dependency>
+
         <!-- ShedLock: distributed lock for @Scheduled jobs across instances. -->
         <dependency>
             <groupId>net.javacrumbs.shedlock</groupId>

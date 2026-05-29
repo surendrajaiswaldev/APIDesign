@@ -21,6 +21,7 @@ import com.apidesign.repository.OrderItemRepository;
 import com.apidesign.repository.OrderRepository;
 import com.apidesign.repository.ProductRepository;
 import com.apidesign.repository.UserRepository;
+import com.apidesign.saga.OrderSagaOrchestrator;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -43,6 +44,9 @@ class OrderServiceTest {
     @Mock private ProductRepository productRepository;
     @Mock private OrderMapper orderMapper;
     @Mock private OrderEventPublisher eventPublisher;
+    // Order creation is now delegated to the saga orchestrator. Service-level tests
+    // assert the delegation; full step coverage lives in OrderSagaOrchestratorTest.
+    @Mock private OrderSagaOrchestrator sagaOrchestrator;
 
     @InjectMocks private OrderService orderService;
 
@@ -75,42 +79,40 @@ class OrderServiceTest {
     }
 
     @Test
-    @DisplayName("Should create order successfully with valid data")
-    void testCreateOrderSuccess() {
-        when(userRepository.findById(1L)).thenReturn(Optional.of(mockUser));
-        when(productRepository.findById(1L)).thenReturn(Optional.of(mockProduct));
-        when(productRepository.decrementStock(1L, 2L)).thenReturn(1);
-        when(orderRepository.save(any(Order.class))).thenReturn(mockOrder);
-        when(orderMapper.toDTO(mockOrder)).thenReturn(mockOrderDTO);
+    @DisplayName("createOrder should delegate to the saga orchestrator")
+    void testCreateOrderDelegatesToSaga() {
+        when(sagaOrchestrator.start(createOrderRequest)).thenReturn(mockOrderDTO);
 
         OrderDTO result = orderService.createOrder(createOrderRequest);
 
         assertNotNull(result);
         assertEquals(OrderStatus.PENDING, result.orderStatus());
-        verify(productRepository, times(1)).decrementStock(1L, 2L);
-        verify(orderRepository, times(1)).save(any(Order.class));
+        verify(sagaOrchestrator, times(1)).start(createOrderRequest);
+        // Direct repo calls now belong to the orchestrator — service should not invoke them itself.
+        verify(productRepository, never()).decrementStock(any(), any());
+        verify(orderRepository, never()).save(any());
     }
 
     @Test
-    @DisplayName("Should fail when user does not exist")
+    @DisplayName("createOrder should surface ResourceNotFoundException from the saga")
     void testCreateOrderUserNotFound() {
-        when(userRepository.findById(999L)).thenReturn(Optional.empty());
-
         CreateOrderRequest req = new CreateOrderRequest(
             999L, createOrderRequest.orderItems(), createOrderRequest.shippingAddress(), null);
+        when(sagaOrchestrator.start(req))
+            .thenThrow(new ResourceNotFoundException("nope", ErrorCodes.USER_NOT_FOUND));
 
         ResourceNotFoundException exception =
             assertThrows(ResourceNotFoundException.class, () -> orderService.createOrder(req));
 
         assertEquals(ErrorCodes.USER_NOT_FOUND, exception.getErrorCode());
-        verify(orderRepository, never()).save(any());
     }
 
     @Test
-    @DisplayName("Should fail when order has no items")
+    @DisplayName("createOrder should surface empty-items BusinessLogicException from the saga")
     void testCreateOrderEmptyItems() {
         CreateOrderRequest emptyOrder = new CreateOrderRequest(1L, List.of(), null, null);
-        when(userRepository.findById(1L)).thenReturn(Optional.of(mockUser));
+        when(sagaOrchestrator.start(emptyOrder))
+            .thenThrow(new BusinessLogicException("empty", ErrorCodes.ORDER_EMPTY_ITEMS));
 
         BusinessLogicException exception =
             assertThrows(BusinessLogicException.class, () -> orderService.createOrder(emptyOrder));
@@ -119,29 +121,16 @@ class OrderServiceTest {
     }
 
     @Test
-    @DisplayName("Should fail when product not found")
-    void testCreateOrderProductNotFound() {
-        when(userRepository.findById(1L)).thenReturn(Optional.of(mockUser));
-        when(productRepository.findById(1L)).thenReturn(Optional.empty());
-
-        ResourceNotFoundException exception =
-            assertThrows(ResourceNotFoundException.class,
-                () -> orderService.createOrder(createOrderRequest));
-        assertEquals(ErrorCodes.ORDER_ITEM_PRODUCT_NOT_FOUND, exception.getErrorCode());
-    }
-
-    @Test
-    @DisplayName("Should fail when insufficient stock")
+    @DisplayName("createOrder should surface insufficient-stock BusinessLogicException from the saga")
     void testCreateOrderInsufficientStock() {
-        when(userRepository.findById(1L)).thenReturn(Optional.of(mockUser));
-        when(productRepository.findById(1L)).thenReturn(Optional.of(mockProduct));
-        when(productRepository.decrementStock(1L, 2L)).thenReturn(0);
+        when(sagaOrchestrator.start(createOrderRequest))
+            .thenThrow(
+                new BusinessLogicException("no stock", ErrorCodes.ORDER_INSUFFICIENT_STOCK));
 
         BusinessLogicException exception =
             assertThrows(BusinessLogicException.class,
                 () -> orderService.createOrder(createOrderRequest));
         assertEquals(ErrorCodes.ORDER_INSUFFICIENT_STOCK, exception.getErrorCode());
-        verify(orderRepository, never()).save(any());
     }
 
     @Test

@@ -39,6 +39,11 @@ spring:
         order_inserts: true
         order_updates: true
         enable_lazy_load_no_trans: false
+      # JPA standard query timeout (ms). Caps every JPA query — including criteria,
+      # @Query, findAll, etc. — at 5 s by default. Individual queries can still
+      # override per-call via QueryHints. Surfaces as PersistenceException →
+      # mapped to 500 by GlobalExceptionHandler.
+      jakarta.persistence.query.timeout: 5000
     show-sql: false
     open-in-view: false
 
@@ -129,6 +134,13 @@ app:
     exceptions:
       # When false, no rows are written to APPLICATION_EXCEPTION (request log lines remain).
       enabled: true
+  idempotency:
+    # When true (default), the IdempotencyKeyFilter intercepts POST / PATCH requests that
+    # carry an Idempotency-Key header. The first 2xx response is cached in the
+    # IDEMPOTENCY_KEY table; subsequent requests with the same key replay the cached body
+    # and set Idempotent-Replay: true. Mismatched bodies for the same key return 422.
+    # When false the filter passes everything through unchanged.
+    enabled: true
 
 # Resilience4j: declarative circuit breaker / retry / bulkhead for PaymentService.
 # Auto-bound by the Spring Boot 3 starter — no Java config needed.

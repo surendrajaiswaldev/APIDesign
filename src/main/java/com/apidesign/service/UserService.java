@@ -59,18 +59,28 @@ public class UserService {
 
     @Transactional(readOnly = true)
     public UserDTO getUserById(Long userId) {
-        User user = userRepository.findById(userId)
+        return userMapper.toDTO(loadUser(userId));
+    }
+
+    /** Entity-returning variant for HAL assemblers — DTO mapping happens in the assembler. */
+    @Transactional(readOnly = true)
+    public User loadUser(Long userId) {
+        return userRepository.findById(userId)
             .orElseThrow(() -> new ResourceNotFoundException(
                 "User not found with ID: " + userId, ErrorCodes.USER_NOT_FOUND));
-        return userMapper.toDTO(user);
     }
 
     @Transactional(readOnly = true)
     public UserDTO getUserByEmail(String email) {
-        User user = userRepository.findByEmailIgnoreCase(email)
+        return userMapper.toDTO(loadUserByEmail(email));
+    }
+
+    /** Entity-returning variant for HAL assemblers. */
+    @Transactional(readOnly = true)
+    public User loadUserByEmail(String email) {
+        return userRepository.findByEmailIgnoreCase(email)
             .orElseThrow(() -> new ResourceNotFoundException(
                 "User not found with email: " + email, ErrorCodes.USER_NOT_FOUND));
-        return userMapper.toDTO(user);
     }
 
     public UserDTO updateUser(Long userId, UpdateUserRequest request) {
@@ -101,6 +111,12 @@ public class UserService {
     public PagedResponse<UserDTO> getActiveUsers(Pageable pageable) {
         Page<User> users = userRepository.findActiveUsers(true, pageable);
         return PagedResponse.from(users.map(userMapper::toDTO));
+    }
+
+    /** Entity-returning variant for HAL assemblers — pagedAssembler converts to PagedModel. */
+    @Transactional(readOnly = true)
+    public Page<User> findActiveUsers(Pageable pageable) {
+        return userRepository.findActiveUsers(true, pageable);
     }
 
     public UserDTO deactivateUser(Long userId) {

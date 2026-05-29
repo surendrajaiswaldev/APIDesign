@@ -1,0 +1,61 @@
+-- Idempotency-Key store. One row per POST/PATCH that supplied the header and produced
+-- a 2xx response. Lookup by IDEMPOTENCY_KEY (unique) replays the cached RESPONSE_BODY
+-- when the request body hash still matches; mismatched hashes surface as 422.
+-- Idempotent: ORA-00955 (name already used) is logged and skipped, same pattern as V1-V4.
+
+SET SERVEROUTPUT ON;
+
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE SEQUENCE IDEMPOTENCY_KEY_SEQ START WITH 1 INCREMENT BY 50 NOCACHE NOCYCLE';
+  DBMS_OUTPUT.PUT_LINE('Created sequence IDEMPOTENCY_KEY_SEQ');
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE = -955 THEN DBMS_OUTPUT.PUT_LINE('Sequence IDEMPOTENCY_KEY_SEQ already exists, skipping');
+    ELSE RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE q'[
+    CREATE TABLE IDEMPOTENCY_KEY (
+        ID                  NUMBER(19)      NOT NULL,
+        IDEMPOTENCY_KEY     VARCHAR2(64)    NOT NULL,
+        REQUEST_HASH        VARCHAR2(64)    NOT NULL,
+        RESPONSE_STATUS     NUMBER(10)      NOT NULL,
+        RESPONSE_BODY       CLOB,
+        ENDPOINT            VARCHAR2(256),
+        USER_ID             VARCHAR2(128),
+        CREATED_AT          TIMESTAMP(6)    NOT NULL,
+        UPDATED_AT          TIMESTAMP(6),
+        CREATED_BY          VARCHAR2(100),
+        UPDATED_BY          VARCHAR2(100),
+        CONSTRAINT PK_IDEMPOTENCY_KEY PRIMARY KEY (ID)
+    )
+  ]';
+  DBMS_OUTPUT.PUT_LINE('Created table IDEMPOTENCY_KEY');
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE = -955 THEN DBMS_OUTPUT.PUT_LINE('Table IDEMPOTENCY_KEY already exists, skipping');
+    ELSE RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE UNIQUE INDEX IDX_IDEMPOTENCY_KEY ON IDEMPOTENCY_KEY (IDEMPOTENCY_KEY)';
+  DBMS_OUTPUT.PUT_LINE('Created index IDX_IDEMPOTENCY_KEY');
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE = -955 THEN DBMS_OUTPUT.PUT_LINE('Index IDX_IDEMPOTENCY_KEY already exists, skipping');
+    ELSE RAISE; END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE INDEX IDX_IDEMPOTENCY_USER ON IDEMPOTENCY_KEY (USER_ID)';
+  DBMS_OUTPUT.PUT_LINE('Created index IDX_IDEMPOTENCY_USER');
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE = -955 THEN DBMS_OUTPUT.PUT_LINE('Index IDX_IDEMPOTENCY_USER already exists, skipping');
+    ELSE RAISE; END IF;
+END;
+/

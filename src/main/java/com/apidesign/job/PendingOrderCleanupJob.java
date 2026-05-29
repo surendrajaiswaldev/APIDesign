@@ -42,7 +42,13 @@ public class PendingOrderCleanupJob {
 
     @Scheduled(cron = "0 0 * * * *")
     @SchedulerLock(name = LOCK_NAME, lockAtLeastFor = "PT1M", lockAtMostFor = "PT5M")
-    @Transactional
+    // Tx timeout intentionally < ShedLock lockAtMostFor:
+    //   lockAtMostFor = PT5M (300s)  ──── if this instance crashes mid-sweep
+    //   timeout       = 240s         ──── DB aborts the long-running tx first
+    // so the work fails cleanly here BEFORE the distributed lock could expire
+    // and let a second node re-fire the same job. Keep this invariant intact
+    // whenever you tune either value.
+    @Transactional(timeout = 240)
     public void cancelStalePendingOrders() {
         LocalDateTime threshold = LocalDateTime.now().minusHours(24);
         List<Order> stale =

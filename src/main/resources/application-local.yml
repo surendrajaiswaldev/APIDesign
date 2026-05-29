@@ -55,3 +55,8 @@ app:
     exceptions:
       # Local devs want DB-logged exceptions while iterating.
       enabled: true
+  idempotency:
+    # Same default as application.yml — leave the filter active locally so demos of the
+    # Idempotency-Key header behave the same as production. Flip to false if you want to
+    # observe what controllers do without the filter on the chain.
+    enabled: true

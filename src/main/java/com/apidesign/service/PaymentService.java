@@ -59,4 +59,12 @@ public class PaymentService {
             ex.toString());
         return "DEGRADED:order-" + orderId;
     }
+
+    /**
+     * Saga compensation hook: reverse a previously-successful charge. Stubbed — logs only.
+     * Production would re-call the gateway's refund endpoint with the original reference.
+     */
+    public void refundCharge(Long orderId, String chargeRef) {
+        log.info("Refunding charge ref={} for order {}", chargeRef, orderId);
+    }
 }

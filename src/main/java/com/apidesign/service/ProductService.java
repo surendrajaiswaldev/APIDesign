@@ -59,10 +59,15 @@ public class ProductService {
     @Transactional(readOnly = true)
     @Cacheable(cacheNames = "products", key = "#productId")
     public ProductDTO getProductById(Long productId) {
-        Product product = productRepository.findById(productId)
+        return productMapper.toDTO(loadProduct(productId));
+    }
+
+    /** Entity-returning variant for HAL assemblers. Not cached (caches DTO at the other entry). */
+    @Transactional(readOnly = true)
+    public Product loadProduct(Long productId) {
+        return productRepository.findById(productId)
             .orElseThrow(() -> new ResourceNotFoundException(
                 "Product not found with ID: " + productId, ErrorCodes.PRODUCT_NOT_FOUND));
-        return productMapper.toDTO(product);
     }
 
     @Transactional(readOnly = true)
@@ -77,6 +82,35 @@ public class ProductService {
     public PagedResponse<ProductDTO> getAllProducts(Pageable pageable) {
         Page<Product> products = productRepository.findAll(pageable);
         return PagedResponse.from(products.map(productMapper::toDTO));
+    }
+
+    /** Entity-returning variant for HAL assemblers. */
+    @Transactional(readOnly = true)
+    public Page<Product> findAllProducts(Pageable pageable) {
+        return productRepository.findAll(pageable);
+    }
+
+    /** Entity-returning variant for HAL assemblers. */
+    @Transactional(readOnly = true)
+    public Page<Product> findProductsByCategory(String category, Pageable pageable) {
+        return productRepository.findByCategory(category, pageable);
+    }
+
+    /** Entity-returning variant for HAL assemblers. */
+    @Transactional(readOnly = true)
+    public Page<Product> findProductsByPriceRange(
+        String category, java.math.BigDecimal minPrice, java.math.BigDecimal maxPrice, Pageable pageable) {
+        if (minPrice != null && maxPrice != null && minPrice.compareTo(maxPrice) > 0) {
+            throw new ValidationException(
+                "minPrice must be less than or equal to maxPrice", ErrorCodes.INVALID_PRICE_RANGE);
+        }
+        return productRepository.searchProducts(category, minPrice, maxPrice, pageable);
+    }
+
+    /** Entity-returning variant for HAL assemblers. */
+    @Transactional(readOnly = true)
+    public Page<Product> findLowStockProductsEntity(Pageable pageable) {
+        return productRepository.findLowStockProducts(pageable);
     }
 
     // Single-product change → drop just that entry. Category listings are page-keyed and
